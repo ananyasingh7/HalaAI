@@ -1,0 +1,35 @@
+from fastapi import FastAPI, HTTPException
+from app.engine import engine
+from app.schemas import GenerateRequest, GenerateResponse, AdapterLoadRequest
+
+app = FastAPI(title="Sovereign AI Hub", version="1.0")
+
+@app.get("/")
+def health_check():
+    return {"status": "online", "current_adapter": engine.adapter_id}
+
+@app.post("/chat", response_model=GenerateResponse)
+async def chat_endpoint(request: GenerateRequest):
+    """
+    Main endpoint for all your apps (Stock, Sports, etc.)
+    """
+    try:
+        result = await engine.generate_text(request)
+        return GenerateResponse(
+            text=result["text"],
+            token_count=result["token_count"],
+            processing_time=result["processing_time"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/adapters/load")
+def load_adapter(request: AdapterLoadRequest):
+    """
+    Call this BEFORE sending a chat request if you need a specific specialist.
+    """
+    try:
+        engine.load_adapter(request.adapter_name)
+        return {"status": "success", "loaded": request.adapter_name}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Adapter not found")

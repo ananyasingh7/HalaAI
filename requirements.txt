@@ -1,0 +1,6 @@
+mlx-lm
+huggingface-hub
+fastapi
+uvicorn
+pydantic
+python-multipart
