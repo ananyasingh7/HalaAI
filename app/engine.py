@@ -1,5 +1,6 @@
 from pathlib import Path
-from mlx_lm import load, generate
+from mlx_lm import load, generate, stream_generate
+from mlx_lm.sample_utils import make_sampler
 import asyncio
 import time
 
@@ -114,6 +115,39 @@ class ModelEngine:
                 "token_count": len(self.tokenizer.encode(response_text)),
                 "processing_time": end_time - start_time
             }
+
+    async def generate_stream(self, request):
+        """
+        Generator that yields tokens in real-time.
+        """
+        async with self.lock:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.prompt})
+            
+            prompt_formatted = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            # stream generation
+            # mlx_lm.stream_generate yields (token, text_so_far)
+            # We filter to just send the new text chunks
+            sampler = make_sampler(
+                temp=getattr(request, "temp", 0.7),
+                top_p=1.0,
+                min_p=0.0,
+                min_tokens_to_keep=1,
+            )
+
+            for response in stream_generate(
+                self.model, 
+                self.tokenizer, 
+                prompt=prompt_formatted, 
+                max_tokens=request.max_tokens, 
+                sampler=sampler,
+            ):
+                yield response.text
 
 
 # global instance

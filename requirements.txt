@@ -1,6 +1,7 @@
 mlx-lm
 huggingface-hub
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 python-multipart
+chainlit

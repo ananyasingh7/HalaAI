@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from app.engine import engine
 from app.schemas import GenerateRequest, GenerateResponse, AdapterLoadRequest
+from app.ws_chat import router as ws_router
 
 app = FastAPI(title="Sovereign AI Hub", version="1.0")
+app.include_router(ws_router)
 
 @app.get("/")
 def health_check():
