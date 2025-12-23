@@ -5,3 +5,7 @@ uvicorn[standard]
 pydantic
 python-multipart
 chainlit
+langchain<0.2.0
+requests
+langchain
+langchain-core
