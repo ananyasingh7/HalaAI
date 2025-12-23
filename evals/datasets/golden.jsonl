@@ -1,0 +1,6 @@
+{"category": "personal", "question": "Who is Ananya Singh?", "expected_keyword": "New York City"}
+{"category": "personal", "question": "What is my favorite sports team?", "expected_keyword": "Giants"}
+{"category": "personal", "question": "I'm stressed. What should I drink?", "expected_keyword": "tea"}
+{"category": "logic", "question": "Write a Python function to calculate the fibonacci sequence.", "expected_keyword": "def fibonacci"}
+{"category": "logic", "question": "If I have 3 apples and eat one, how many do I have?", "expected_keyword": "2"}
+{"category": "tone", "question": "I want to eat out tonight. Give me a plan.", "expected_keyword": "dinner"}
