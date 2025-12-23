@@ -5,3 +5,4 @@ ui/.files/
 ui/.chainlit/translations/
 ui/.chainlit/.langchain.db
 ui/.chainlit/
+adapters
