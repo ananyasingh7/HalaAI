@@ -1,0 +1,30 @@
+id,timestamp,request_id,adapter_name,prompt,system_prompt,response_text,tokens_in,tokens_out,total_time_sec,tokens_per_sec,model_name,temp,gpu_usage_pct,cpu_usage_pct,gpu_temp_c,ram_usage_pct,wattage
+1,2025-12-27 01:29:01.779919,unknown,base,Hi!,,Hello! How can I assist you today?,31,10,0.583373069763184,17.1416894579303,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,513.702140927315,24.2,0.0,63.9,0.0083109941482544
+2,2025-12-27 01:29:11.926853,unknown,base,How are you,,"I'm just a computer program, so I don't have feelings like a human, but I'm here and ready to help you! How can I assist you today?",32,35,1.15962791442871,30.1820951052586,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,586.796582341194,17.9,0.0,75.3,0.0130524768829346
+3,2025-12-27 01:33:48.292548,unknown,base,Hi! ,,Hello! How can I assist you today?,32,10,0.550745010375977,18.1572230553179,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,418.070135056973,28.2,0.0,63.2,0.0021824049949646
+4,2025-12-27 01:34:27.961251,unknown,base,Write me recursive python3 Fibonacci sequence ,,"Certainly! Here's a simple recursive function to generate Fibonacci numbers in Python:
+
+```python
+def fibonacci(n):
+    if n <= 0:
+        return ""Input should be a positive integer""
+    elif n == 1:
+        return 0
+    elif n == 2:
+        return 1
+    else:
+        return fibonacci(n-1) + fibonacci(n-2)
+
+# Example usage:
+n = 10
+for i in range(1, n+1):
+    print(f""Fibonacci({i}) = {fibonacci(i)}"")
+```
+
+This code defines a function `fibonacci(n)` which returns the n-th Fibonacci number. Note that the Fibonacci sequence is typically defined as starting with 0 and 1, and each subsequent number is the sum of the previous two. The recursion in the function `fibonacci(n)` correctly reflects this definition.
+
+However, please be aware that this recursive approach has exponential time complexity (O(2^n)) due to the repeated calculations of the same Fibonacci numbers. For larger values of `n`, it would be more efficient to use iterative methods or memoization to store previously computed values.",37,236,6.11681818962097,38.5821505043987,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,789.5,19.0,0.0,74.2,0.0240725059509277
+5,2025-12-27 01:36:15.247542,unknown,base,My birthday is on Jan 1st,,"That's a wonderful day to celebrate! New Year's Day as a birthday means you get to celebrate twice, once with your loved ones and once as part of the general New Year's celebration. How do you like to celebrate your birthday?",37,49,1.57408285140991,31.1292381821646,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,789.5,11.1,0.0,73.6,0.025671085357666
+6,2025-12-27 01:36:23.810267,unknown,base,I like brocolli ,,"That's great to hear! Broccoli is a very nutritious vegetable, rich in vitamins C and K, as well as fiber. It's a versatile ingredient and can be enjoyed in a variety of ways, from steamed or roasted as a side dish, to being added to salads, soups, or even blended into smoothies. Do you have a favorite way to prepare or eat broccoli?",35,80,2.35396981239319,33.9851427060856,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,789.5,9.4,0.0,72.9,0.0240053844451904
+7,2025-12-27 01:36:33.638362,unknown,base,Who is elon musk?,,"Elon Musk is a business magnate and investor known for his pioneering work in electric vehicles, space exploration, and renewable energy. He is the founder, CEO, and chief engineer of SpaceX; the CEO and product architect of Tesla, Inc.; the founder of The Boring Company and Neuralink; and previously served as CEO and product architect of SolarCity. Born in South Africa, Musk is known for his entrepreneurial ventures and for pushing the boundaries of technological innovation. His ventures have significantly impacted the automotive, aerospace, renewable energy, and transportation industries. Musk is also known for his public persona and active presence on social media platforms like Twitter.",36,129,3.54310202598572,36.408773739478,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,789.5,15.5,0.0,72.5,0.024122631072998
+8,2025-12-27 01:36:41.049124,unknown,base,When is my birthday?,,"I'm sorry, but as an AI, I don't have access to personal information unless you tell me or unless you've previously shared such information with me in a secure and privacy-compliant manner. You haven't shared your birthday with me before, so I don't know when it is. Is there anything else I can help you with?",34,70,2.12345194816589,32.9651914470971,mlx-community/Qwen2.5-14B-Instruct-4bit,0.7,789.5,10.4,0.0,72.6,0.0238741817474365

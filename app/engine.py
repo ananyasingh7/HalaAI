@@ -3,6 +3,8 @@ from mlx_lm import load, generate, stream_generate
 from mlx_lm.sample_utils import make_sampler
 import asyncio
 import time
+from app.database import init_db, log_stats, InferenceLog
+from app.monitor import monitor
 
 BASE_MODEL_ID = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 ADAPTERS_DIR = Path("adapters")
@@ -25,6 +27,8 @@ class ModelEngine:
         print(f"Initializing Engine... Loading Base Model: {BASE_MODEL_ID}")
         self.model_id = BASE_MODEL_ID
         self.adapter_id = None
+
+        init_db()
 
         # use a Lock to prevent multiple apps from hitting GPU at the same exact time
         self.lock = asyncio.Lock()
@@ -130,9 +134,6 @@ class ModelEngine:
                 messages, tokenize=False, add_generation_prompt=True
             )
 
-            # stream generation
-            # mlx_lm.stream_generate yields (token, text_so_far)
-            # We filter to just send the new text chunks
             sampler = make_sampler(
                 temp=getattr(request, "temp", 0.7),
                 top_p=1.0,
@@ -140,6 +141,18 @@ class ModelEngine:
                 min_tokens_to_keep=1,
             )
 
+            # --- [START] METRICS TRACKING ---
+            start_time = time.time()
+            tokens_generated = 0
+            peak_gpu = 0.0
+            peak_temp = 0.0
+            response_text = ""
+            
+            # Calculate input token count (approximate cost tracking)
+            prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
+            # -------------------------------
+
+            # 2. Generation Loop
             for response in stream_generate(
                 self.model, 
                 self.tokenizer, 
@@ -147,7 +160,53 @@ class ModelEngine:
                 max_tokens=request.max_tokens, 
                 sampler=sampler,
             ):
+                # Track volume
+                tokens_generated += 1
+                
+                # Hardware poll: capture peaks during the heavy lifting
+                stats = monitor.get_snapshot()
+                if stats:
+                    peak_gpu = max(peak_gpu, stats.get("gpu_usage", 0))
+                    peak_temp = max(peak_temp, stats.get("gpu_temp", 0))
+
+                chunk = response.text or ""
+                if chunk:
+                    if response_text and chunk.startswith(response_text):
+                        response_text = chunk
+                    else:
+                        response_text += chunk
+
                 yield response.text
+
+            duration = time.time() - start_time
+            final_stats = monitor.get_snapshot()
+            
+            # Create the log entry
+            log_entry = InferenceLog(
+                request_id=getattr(request, "request_id", "unknown"),
+                adapter_name=self.adapter_id or "base",
+                prompt=request.prompt,  # Optional: remove if privacy is a concern
+                system_prompt=getattr(request, "system_prompt", None),
+                response_text=response_text,
+                tokens_in=prompt_tokens,
+                tokens_out=tokens_generated,
+                total_time_sec=duration,
+                tokens_per_sec=tokens_generated / duration if duration > 0 else 0,
+                
+                # Hardware Vitals
+                gpu_usage_pct=peak_gpu,
+                gpu_temp_c=peak_temp,
+                cpu_usage_pct=final_stats.get("cpu_usage", 0),
+                ram_usage_pct=final_stats.get("ram_usage", 0),
+                wattage=final_stats.get("gpu_power", 0),
+                
+                # Config
+                model_name=self.model_id,
+                temp=getattr(request, "temp", 0.7),
+            )
+            
+            # Fire-and-forget save to SQLite
+            asyncio.create_task(asyncio.to_thread(log_stats, log_entry))
 
 
 # global instance

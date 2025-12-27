@@ -11,6 +11,20 @@ from websockets.exceptions import InvalidStatus
 WS_URL = os.getenv("HALA_WS_URL", "ws://localhost:8000/ws/chat/v2")
 
 
+def _configure_engineio_limits() -> None:
+    # Avoid Engine.IO rejecting larger polling payloads under load.
+    try:
+        from engineio.payload import Payload
+    except Exception:
+        return
+
+    max_packets = int(os.getenv("ENGINEIO_MAX_DECODE_PACKETS", "128"))
+    Payload.max_decode_packets = max_packets
+
+
+_configure_engineio_limits()
+
+
 def _url_port(url: str) -> int | None:
     parsed = urlparse(url)
     if parsed.port is not None:
