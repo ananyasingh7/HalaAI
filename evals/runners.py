@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -7,6 +8,10 @@ from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
 from mlx_lm import generate, load
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 EVALS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EVALS_DIR.parent
@@ -119,7 +124,7 @@ def run_eval_batch(
     max_tokens: int,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    print(f"\nStarting run: {run_name}...")
+    logger.info("Starting run: %s...", run_name)
 
     for idx, entry in enumerate(entries, start=1):
         question = entry.get("question")
@@ -136,7 +141,7 @@ def run_eval_batch(
         duration = time.time() - start
 
         preview = _sanitize_one_line(question)[:60]
-        print(f"  Q{idx:03d} ({category}): {preview} ({duration:.2f}s)")
+        logger.info("Q%03d (%s): %s (%.2fs)", idx, category, preview, duration)
 
         response_text = response.strip()
         results.append(
@@ -185,7 +190,7 @@ def main() -> None:
         adapter_path = PROJECT_ROOT / adapter_path
 
     entries = _load_jsonl(dataset_path)
-    print(f"Loaded {len(entries)} questions from {dataset_path}")
+    logger.info("Loaded %s questions from %s", len(entries), dataset_path)
 
     results_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -193,7 +198,7 @@ def main() -> None:
     report_file = results_dir / f"eval_report_{stem}_{timestamp}.md"
     jsonl_file = results_dir / f"eval_results_{stem}_{timestamp}.jsonl"
 
-    print("\nLoading BASE model...")
+    logger.info("Loading BASE model...")
     model, tokenizer = load(args.model)
     base_results = run_eval_batch(
         model,
@@ -210,7 +215,7 @@ def main() -> None:
             raise FileNotFoundError(
                 f"Adapter not found: {adapter_path} (pass --no-adapter to skip tuned run)"
             )
-        print(f"\nLoading model with ADAPTER from {adapter_path}...")
+        logger.info("Loading model with ADAPTER from %s...", adapter_path)
         model, tokenizer = load(args.model, adapter_path=str(adapter_path))
         tuned_results = run_eval_batch(
             model,
@@ -293,9 +298,9 @@ def main() -> None:
                 f.write(f"> {tuned_one}\n\n")
             f.write("---\n")
 
-    print(f"\nEval complete.")
-    print(f"- Report: {report_file}")
-    print(f"- Results JSONL: {jsonl_file}")
+    logger.info("Eval complete.")
+    logger.info("Report: %s", report_file)
+    logger.info("Results JSONL: %s", jsonl_file)
 
 
 if __name__ == "__main__":

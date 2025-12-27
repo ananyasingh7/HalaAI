@@ -1,0 +1,22 @@
+-Priority Queue: Allow the UI requests to "cut in line" or pause long-running agent tasks
+-Request queue + cancel/timeout: Add per‑request timeouts and cancellation to avoid long tail stalls.
+-Adapter caching or pool: Cache frequently used adapters or pre‑warm a few to reduce swap latency.
+-Auth + rate limiting: Even a simple API key header + basic rate limiting goes a long way.
+-Vector DB (or MongoDB) - store chat history? train from it? allows your AI to access millions of documents, past conversations, and PDFs without needing to fit them all into RAM at once
+-Metrics export: Expose Prometheus metrics or a simple /metrics JSON for dashboards.
+-Config surface: Move tunables to env vars (max tokens, temperature defaults, log privacy, adapter policy).
+
+-Batching or micro‑batching: Improves throughput when multiple clients queue.
+-Multi‑model routing: Useful if you want to switch between smaller/cheaper models.
+-Structured logging + trace IDs: Helps correlate client requests with logs and GPU stats.
+-Robust eval harness: Automated regressions + nightly runs; include latency and quality metrics.
+-Safety tools: Prompt injection mitigation, tool‑use guardrails for agents.
+
+Leveraging Rust Ideas (Potential):
+-Rust tokenizers (HF tokenizers) via FFI: They’re extremely fast and already used in production; you could call them from Python via pyo3/maturin or run a small Rust sidecar service.
+-SIMD‑accelerated preprocessing: If you do heavy prompt formatting or post‑processing, Rust can chew through text faster than Python.
+-Request queue + scheduler: Rust service to manage priority, timeouts, cancellations, and fairness across clients.
+-Streaming gateway: A Rust WebSocket/HTTP front door that handles backpressure and low‑latency streaming more efficiently.
+-Metrics + logging pipeline: High‑throughput, structured logs and metrics export without Python GIL overhead.
+-Adapter lifecycle manager: Rust daemon that preloads/caches adapters, handles swap policies, and exposes a small control API.
+-Data ingestion + eval runners: Faster batch evals, dataset preprocessing, and results aggregation.

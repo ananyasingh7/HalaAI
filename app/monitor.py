@@ -1,9 +1,16 @@
-import subprocess
 import json
+import logging
+import shutil
+import subprocess
 import threading
 import time
+
 import psutil
-import shutil
+
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 class HardwareMonitor:
     _instance = None
@@ -34,8 +41,8 @@ class HardwareMonitor:
     def _check_dependencies(self):
         """Check if macmon is installed"""
         if not shutil.which("macmon"):
-            print("WARNING: 'macmon' not found. GPU stats will be 0.")
-            print("Run: brew install vladkens/tap/macmon")
+            logger.info("macmon not found. GPU stats will be 0.")
+            logger.info("Run: brew install vladkens/tap/macmon")
             self.has_macmon = False
         else:
             self.has_macmon = True
@@ -99,8 +106,8 @@ class HardwareMonitor:
                         self.latest_stats["soc_temp"] = self._coerce_float(data.get("soc_temp", 0))
 
                 time.sleep(0.5) # Update 2x per second
-            except Exception as e:
-                print(f"Monitor Error: {e}")
+            except Exception:
+                logger.critical("Monitor error", exc_info=True)
                 time.sleep(1)
 
     def get_snapshot(self):

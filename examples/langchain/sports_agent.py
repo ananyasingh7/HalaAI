@@ -1,8 +1,14 @@
+import logging
+
 import requests
 from HalaLLM import SovereignHubLLM
 from langchain.agents import AgentExecutor, AgentType, Tool, initialize_agent
 from langchain_core.prompts import PromptTemplate
 
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 API_URL = "http://localhost:8000"
 SPORTS_ADAPTER = "sports_v1"
 
@@ -19,7 +25,7 @@ tools = [
     )
 ]
 
-print("🔌 Switching Hub to Sports Mode...")
+logger.info("🔌 Switching Hub to Sports Mode...")
 requests.post(f"{API_URL}/adapters/load", json={"adapter_name": SPORTS_ADAPTER}, timeout=15)
 
 # initialize the Agent
@@ -42,6 +48,6 @@ agent = initialize_agent(
 )
 
 # run it
-print("🏈 Agent Running...")
+logger.info("🏈 Agent Running...")
 response = agent.run("Check the Giants score and tell me if they are winning.")
-print(f"\nFinal Answer: {response}")
+logger.info("Final Answer: %s", response)

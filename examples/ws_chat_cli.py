@@ -1,11 +1,16 @@
 import argparse
 import asyncio
 import json
+import logging
 import uuid
 
 import websockets
 from websockets.exceptions import InvalidStatus
 
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 async def _recv_json(ws) -> dict:
     raw = await ws.recv()
@@ -29,9 +34,9 @@ async def main():
         async with websockets.connect(args.url) as ws:
             try:
                 welcome = await asyncio.wait_for(_recv_json(ws), timeout=1.0)
-                print(f"Connected: {welcome}")
+                logger.info("Connected: %s", welcome)
             except asyncio.TimeoutError:
-                print("Connected.")
+                logger.info("Connected.")
 
             async def send_prompt(prompt: str):
                 request_id = str(uuid.uuid4())
@@ -43,9 +48,9 @@ async def main():
                 message = await _recv_json(ws)
                 if message.get("type") == "chat_response":
                     response = message.get("response", {})
-                    print(response.get("text", ""))
+                    logger.info("%s", response.get("text", ""))
                     return
-                print(message)
+                logger.info("%s", message)
 
             if args.prompt:
                 await send_prompt(args.prompt)
@@ -53,7 +58,7 @@ async def main():
             if not interactive:
                 return
 
-            print("Interactive mode. Commands: /quit, /system <text>, /max_tokens <n>")
+            logger.info("Interactive mode. Commands: /quit, /system <text>, /max_tokens <n>")
             while True:
                 try:
                     line = input("> ").strip()
@@ -67,30 +72,30 @@ async def main():
 
                 if line.startswith("/system "):
                     system_prompt = line[len("/system ") :].strip() or None
-                    print("Updated system prompt.")
+                    logger.info("Updated system prompt.")
                     continue
 
                 if line.startswith("/max_tokens "):
                     value = line[len("/max_tokens ") :].strip()
                     max_tokens = int(value)
-                    print(f"Updated max_tokens={max_tokens}")
+                    logger.info("Updated max_tokens=%s", max_tokens)
                     continue
 
                 await send_prompt(line)
     except InvalidStatus as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         if status_code is not None:
-            print(f"Server rejected WebSocket connection (HTTP {status_code}).")
+            logger.critical("Server rejected WebSocket connection (HTTP %s).", status_code)
         else:
-            print("Server rejected WebSocket connection.")
-        print(
+            logger.critical("Server rejected WebSocket connection.")
+        logger.critical(
             "If the server logs show 'Unsupported upgrade request', the server environment is "
             "missing WebSocket support. Install deps with `python -m pip install -r requirements.txt` "
             "(or `pip install 'uvicorn[standard]'`)."
         )
         return
     except OSError as e:
-        print(f"Connection error: {e}")
+        logger.critical("Connection error: %s", e)
         return
 
 

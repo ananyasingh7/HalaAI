@@ -1,8 +1,13 @@
-import json
 import argparse
+import json
+import logging
 import os
 from pathlib import Path
 
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 EVALS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EVALS_DIR.parent
 DEFAULT_OUTPUT_PATH = Path(os.environ.get("HALA_EVAL_DATASET_OUT", str(EVALS_DIR / "datasets" / "golden_general.jsonl")))
@@ -83,7 +88,7 @@ def main():
         for q in questions:
             f.write(json.dumps(q, ensure_ascii=False) + "\n")
     
-    print(f"Generated {len(questions)} questions at {output_path}")
+    logger.info("Generated %s questions at %s", len(questions), output_path)
 
 if __name__ == "__main__":
     main()

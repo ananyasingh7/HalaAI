@@ -1,15 +1,22 @@
-from mlx_lm import load, generate
+import logging
+
+from mlx_lm import generate, load
+
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 MODEL_NAME = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 
 def main():
-    print(f"Loading {MODEL_NAME} into Unified Memory...")
+    logger.info("Loading %s into Unified Memory...", MODEL_NAME)
     
     # This automatically leverages the M4's Neural Engine/GPU.
     model, tokenizer = load(MODEL_NAME, adapter_path="adapters")
     
-    print("Model loaded. Type 'quit' to exit.")
-    print("-" * 50)
+    logger.info("Model loaded. Type 'quit' to exit.")
+    logger.info("%s", "-" * 50)
 
     system_prompt = (
         "You are a helpful personal assistant for Ananya Singh. "
@@ -35,8 +42,6 @@ def main():
             add_generation_prompt=True
         )
 
-        print("Assistant: ", end="", flush=True)
-
         # max_tokens: controls response length
         # temp: 0.7 is the "Goldilocks" zone for creativity vs precision
         response = generate(
@@ -46,8 +51,8 @@ def main():
             verbose=False, 
             max_tokens=1024
         )
-        
-        print(response)
+
+        logger.info("Assistant: %s", response)
         messages.append({"role": "assistant", "content": response})
 
 if __name__ == "__main__":

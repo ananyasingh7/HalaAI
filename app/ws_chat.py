@@ -1,14 +1,18 @@
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.engine import engine
+from app.logging_setup import setup_logging
 from app.schemas import GenerateRequest, GenerateResponse
 
 router = APIRouter()
 
+setup_logging()
+logger = logging.getLogger(__name__)
 
 def _model_validate(model_cls, payload: Dict[str, Any]):
     model_validate = getattr(model_cls, "model_validate", None)  # pydantic v2
@@ -90,7 +94,7 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "detail": str(e)})
             
     except WebSocketDisconnect:
-        print("Client disconnected")
+        logger.info("Client disconnected")
     except Exception as e:
         try:
             await websocket.send_json({"type": "error", "detail": str(e)})

@@ -1,10 +1,17 @@
-from pathlib import Path
-from mlx_lm import load, generate, stream_generate
-from mlx_lm.sample_utils import make_sampler
 import asyncio
+import logging
 import time
-from app.database import init_db, log_stats, InferenceLog
+from pathlib import Path
+
+from mlx_lm import generate, load, stream_generate
+from mlx_lm.sample_utils import make_sampler
+
+from app.database import InferenceLog, init_db, log_stats
+from app.logging_setup import setup_logging
 from app.monitor import monitor
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 BASE_MODEL_ID = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 ADAPTERS_DIR = Path("adapters")
@@ -24,7 +31,7 @@ class ModelEngine:
         if self._initialized:
             return
         
-        print(f"Initializing Engine... Loading Base Model: {BASE_MODEL_ID}")
+        logger.info("Initializing Engine... Loading Base Model: %s", BASE_MODEL_ID)
         self.model_id = BASE_MODEL_ID
         self.adapter_id = None
 
@@ -36,7 +43,7 @@ class ModelEngine:
         # load the base model
         self.model, self.tokenizer = load(self.model_id)
         self._initialized = True
-        print("Engine Online. Ready for inference.")
+        logger.info("Engine Online. Ready for inference.")
 
     def _resolve_adapter_path(self, adapter_name: str) -> Path:
         """
@@ -64,15 +71,15 @@ class ModelEngine:
             raise FileNotFoundError(f"Adapter {adapter_name} not found in {ADAPTERS_DIR}")
         
         if self.adapter_id == adapter_name:
-            print(f"Adapter {adapter_name} already loaded.")
+            logger.info("Adapter %s already loaded.", adapter_name)
             return
 
-        print(f"Hot-swapping to adapter: {adapter_name}...")
+        logger.info("Hot-swapping to adapter: %s...", adapter_name)
 
         # mlx efficient reload, re-fesus the base weights with the new adapter weights
         self.model, self.tokenizer = load(self.model_id, adapter_path=str(adapter_path))
         self.adapter_id = adapter_name
-        print(f"Swapped to {adapter_name}")
+        logger.info("Swapped to %s", adapter_name)
 
     def unload_adapter(self):
         """
@@ -81,7 +88,7 @@ class ModelEngine:
         if self.adapter_id is None:
             return
         
-        print("Reverting adapter to base")
+        logger.info("Reverting adapter to base")
         self.model, self.tokenizer = load(self.model_id)
         self.adapter_id = None
 

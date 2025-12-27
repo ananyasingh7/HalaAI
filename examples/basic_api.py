@@ -1,4 +1,11 @@
+import logging
+
 import requests
+
+from app.logging_setup import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 API_URL = "http://localhost:8000"
 
@@ -12,4 +19,4 @@ payload = {
 }
 response = requests.post(f"{API_URL}/chat", json=payload)
 
-print(response.json())
+logger.info("Response: %s", response.json())
