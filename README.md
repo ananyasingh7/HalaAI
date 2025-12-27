@@ -103,6 +103,23 @@ curl -X POST http://localhost:8000/adapters/load \
   -d '{"adapter_name":"default"}'
 ```
 
+## Performance and Evals
+
+### Performance
+
+- Avg ~29.8 tokens/sec with peaks around ~38 t/s for the 14B model.
+- Roughly 4x human reading speed (~5-8 tokens/sec).
+- Total time vs tokens-out is linear, indicating stable throughput as responses get longer.
+
+![Inference stats](perfomance/inference_stats_12-26-2025.png)
+
+### Evals
+
+- Report: `evals/results/eval_report_golden_general_20251223_170911.md`
+- Dataset: `evals/datasets/golden_general.jsonl` (max tokens: 200)
+- Base model: 41/50 keyword hits (82.0%)
+- Tuned adapter: 39/50 keyword hits (78.0%)
+
 ## Streaming UI (Chainlit)
 
 See `ui/chainlit.md` for detailed UI setup. The UI connects to `ws://localhost:8000/ws/chat/v2` and streams tokens into the chat pane.
@@ -145,4 +162,3 @@ python evals/runners.py --dataset evals/datasets/golden_general.jsonl
 Local tests on the Mac Studio M4 show:
 - ~30 tokens/sec streaming throughput.
 - Adapter fine-tuning retained personal facts without degrading general reasoning in the "golden dataset" checks.
-
