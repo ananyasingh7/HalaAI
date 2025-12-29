@@ -1,16 +1,14 @@
 import logging
+import os
 
 import requests
 from HalaLLM import SovereignHubLLM
 from langchain.agents import AgentExecutor, AgentType, Tool, initialize_agent
 from langchain_core.prompts import PromptTemplate
 
-from app.logging_setup import setup_logging
-
-setup_logging()
-logger = logging.getLogger(__name__)
-API_URL = "http://localhost:8000"
-SPORTS_ADAPTER = "sports_v1"
+API_URL = os.getenv("HALA_API_URL", "http://localhost:8000")
+# Default to "default" so the adapter load succeeds out-of-the-box.
+SPORTS_ADAPTER = os.getenv("SPORTS_ADAPTER", "default")
 
 # setup the tool
 def get_live_score(query: str):
@@ -25,11 +23,20 @@ tools = [
     )
 ]
 
-logger.info("🔌 Switching Hub to Sports Mode...")
-requests.post(f"{API_URL}/adapters/load", json={"adapter_name": SPORTS_ADAPTER}, timeout=15)
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+logger.info("🔌 Switching Hub to Sports Mode (adapter=%s)...", SPORTS_ADAPTER)
+resp = requests.post(f"{API_URL}/adapters/load", json={"adapter_name": SPORTS_ADAPTER}, timeout=15)
+if resp.status_code == 404:
+    logger.warning(
+        "Adapter '%s' not found on the server. Using base model instead. "
+        "Set SPORTS_ADAPTER to a valid adapter folder if available.",
+        SPORTS_ADAPTER,
+    )
 
 # initialize the Agent
-llm = SovereignHubLLM(api_url=API_URL, adapter=SPORTS_ADAPTER, max_tokens=512)
+llm = SovereignHubLLM(api_url=API_URL, adapter=SPORTS_ADAPTER, max_tokens=512, priority=1)
 
 # tighten the prompt to reduce over-answering
 prefix = (
@@ -48,6 +55,6 @@ agent = initialize_agent(
 )
 
 # run it
-logger.info("🏈 Agent Running...")
+# logger.info("🏈 Agent Running...")
 response = agent.run("Check the Giants score and tell me if they are winning.")
-logger.info("Final Answer: %s", response)
+# logger.info("Final Answer: %s", response)

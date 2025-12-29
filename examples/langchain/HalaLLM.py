@@ -5,15 +5,27 @@ import requests
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.llms import LLM
 
+
+def _env_priority(default: int = 10) -> int:
+    value = os.getenv("HALA_PRIORITY")
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 class SovereignHubLLM(LLM):
     """
-    A custom LangChain wrapper for your Sovereign AI Hub.
+    A custom LangChain wrapper for your HalaAI.
     Allows you to use Qwen 2.5 14B with LangChain Agents.
     """
     
     api_url: str = os.getenv("HALA_API_URL", "http://localhost:8000")
     adapter: str = "default"
     max_tokens: int = 1024
+    priority: int = _env_priority()
     system_prompt: Optional[str] = (
         "You are a helpful assistant. "
         "When using tools, NEVER produce a final answer in the same message as an action. "
@@ -37,6 +49,7 @@ class SovereignHubLLM(LLM):
             "prompt": prompt,
             "max_tokens": self.max_tokens,
             "system_prompt": self.system_prompt,
+            "priority": self.priority,
         }
 
         base_url = self.api_url.rstrip("/")
@@ -57,4 +70,5 @@ class SovereignHubLLM(LLM):
             "adapter": self.adapter,
             "api_url": self.api_url,
             "max_tokens": self.max_tokens,
+            "priority": self.priority,
         }

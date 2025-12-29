@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import time
+import uuid
 from pathlib import Path
+from typing import AsyncGenerator
 
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -9,6 +11,8 @@ from mlx_lm.sample_utils import make_sampler
 from app.database import InferenceLog, init_db, log_stats
 from app.logging_setup import setup_logging
 from app.monitor import monitor
+
+from app.queue import request_queue, QueueItem
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -39,6 +43,11 @@ class ModelEngine:
 
         # use a Lock to prevent multiple apps from hitting GPU at the same exact time
         self.lock = asyncio.Lock()
+        self._bg_lock = asyncio.Lock()
+        self._worker_task = None
+        self._monitor_task = None
+        self.running = False
+        self._monitor_interval = 5
 
         # load the base model
         self.model, self.tokenizer = load(self.model_id)
@@ -92,6 +101,176 @@ class ModelEngine:
         self.model, self.tokenizer = load(self.model_id)
         self.adapter_id = None
 
+    async def start_background_tasks(self):
+        """
+        Spins up the queue worker and monitor if they are not already running.
+        """
+        async with self._bg_lock:
+            if self.running and self._worker_task and not self._worker_task.done():
+                return
+
+            self.running = True
+            loop = asyncio.get_running_loop()
+
+            if not self._worker_task or self._worker_task.done():
+                self._worker_task = loop.create_task(self._worker_loop(), name="queue-worker")
+                logger.info("Started background queue worker.")
+
+            if not self._monitor_task or self._monitor_task.done():
+                self._monitor_task = loop.create_task(self._queue_monitor_loop(), name="queue-monitor")
+                logger.info("Started queue monitor.")
+
+    async def shutdown(self):
+        """
+        Gracefully stop background tasks.
+        """
+        async with self._bg_lock:
+            self.running = False
+            tasks = [t for t in (self._worker_task, self._monitor_task) if t and not t.done()]
+            for task in tasks:
+                task.cancel()
+
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _queue_monitor_loop(self):
+        """
+        Periodically log queue depth and wait times so we can watch it in server logs.
+        """
+        last_depth = None
+        while self.running:
+            try:
+                stats = await request_queue.stats()
+                depth = stats.get("depth", 0)
+
+                if depth != last_depth or depth > 0:
+                    logger.info(
+                        "Queue status | depth=%s min_prio=%s max_prio=%s oldest_wait=%.2fs",
+                        depth,
+                        stats.get("min_priority"),
+                        stats.get("max_priority"),
+                        stats.get("oldest_wait", 0.0),
+                    )
+                last_depth = depth
+            except asyncio.CancelledError:
+                logger.info("Queue monitor stopped.")
+                raise
+            except Exception:
+                logger.exception("Queue monitor error; retrying in %ss", self._monitor_interval)
+
+            await asyncio.sleep(self._monitor_interval)
+
+    async def _worker_loop(self):
+        """
+        The Consumer: Pulls from the queue and runs GPU inference.
+        """
+        logger.info("Queue worker loop running.")
+        try:
+            while self.running:
+                job: QueueItem = await request_queue.dequeue()
+
+                if not self.running:
+                    break
+
+                try:
+                    req = job.payload["request"]
+                    response_queue = job.payload["response_queue"]
+
+                    # Prepare prompt
+                    messages = []
+                    if getattr(req, "system_prompt", None):
+                        messages.append({"role": "system", "content": req.system_prompt})
+                    messages.append({"role": "user", "content": req.prompt})
+
+                    prompt_formatted = self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
+
+                    sampler = make_sampler(
+                        temp=getattr(req, "temp", 0.7),
+                        top_p=1.0,
+                        min_p=0.0,
+                        min_tokens_to_keep=1,
+                    )
+
+                    async with self.lock:
+                        start_time = time.time()
+                        tokens_generated = 0
+                        peak_gpu = 0.0
+                        peak_temp = 0.0
+                        response_text = ""
+                        prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
+
+                        for response in stream_generate(
+                            self.model,
+                            self.tokenizer,
+                            prompt=prompt_formatted,
+                            max_tokens=req.max_tokens,
+                            sampler=sampler,
+                        ):
+                            tokens_generated += 1
+
+                            stats = monitor.get_snapshot()
+                            if stats:
+                                peak_gpu = max(peak_gpu, stats.get("gpu_usage", 0))
+                                peak_temp = max(peak_temp, stats.get("gpu_temp", 0))
+
+                            chunk = response.text or ""
+                            if chunk:
+                                if response_text and chunk.startswith(response_text):
+                                    response_text = chunk
+                                else:
+                                    response_text += chunk
+
+                            # Send token back to the specific client waiting
+                            await response_queue.put(response.text)
+
+                        duration = time.time() - start_time
+                        final_stats = monitor.get_snapshot()
+
+                    await response_queue.put(None)  # Signal completion
+
+                    log_entry = InferenceLog(
+                        request_id=job.request_id,
+                        adapter_name=self.adapter_id or "base",
+                        prompt=req.prompt,
+                        system_prompt=getattr(req, "system_prompt", None),
+                        response_text=response_text,
+                        tokens_in=prompt_tokens,
+                        tokens_out=tokens_generated,
+                        total_time_sec=duration,
+                        tokens_per_sec=tokens_generated / duration if duration > 0 else 0,
+                        model_name=self.model_id,
+                        temp=getattr(req, "temp", 0.7),
+                        gpu_usage_pct=peak_gpu,
+                        cpu_usage_pct=final_stats.get("cpu_usage", 0),
+                        gpu_temp_c=peak_temp,
+                        ram_usage_pct=final_stats.get("ram_usage", 0),
+                        wattage=final_stats.get("gpu_power", 0),
+                    )
+
+                    asyncio.create_task(asyncio.to_thread(log_stats, log_entry))
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.exception("Error in job %s: %s", job.request_id, e)
+                    try:
+                        await job.payload["response_queue"].put(f"[ERROR: {e}]")
+                        await job.payload["response_queue"].put(None)
+                    except Exception:
+                        logger.exception("Failed to notify client for job %s", job.request_id)
+        except asyncio.CancelledError:
+            logger.info("Queue worker cancelled.")
+            raise
+        except Exception:
+            logger.exception("Queue worker crashed")
+        finally:
+            self.running = False
+
     async def generate_text(self, request):
         """
         The main inference method
@@ -127,93 +306,32 @@ class ModelEngine:
                 "processing_time": end_time - start_time
             }
 
-    async def generate_stream(self, request):
+    async def generate_stream(self, request) -> AsyncGenerator[str, None]:
         """
-        Generator that yields tokens in real-time.
+        The Producer: pushes a request into the queue and yields streamed tokens.
         """
-        async with self.lock:
-            messages = []
-            if request.system_prompt:
-                messages.append({"role": "system", "content": request.system_prompt})
-            messages.append({"role": "user", "content": request.prompt})
-            
-            prompt_formatted = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+        await self.start_background_tasks()
+
+        response_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        request_id = str(uuid.uuid4())
+
+        try:
+            await request_queue.enqueue(
+                request_id=request_id,
+                priority=getattr(request, "priority", None),
+                payload={
+                    "request": request,
+                    "response_queue": response_queue,
+                },
             )
+        except BufferError:
+            raise RuntimeError("Request queue is full. Please retry shortly.")
 
-            sampler = make_sampler(
-                temp=getattr(request, "temp", 0.7),
-                top_p=1.0,
-                min_p=0.0,
-                min_tokens_to_keep=1,
-            )
-
-            # --- [START] METRICS TRACKING ---
-            start_time = time.time()
-            tokens_generated = 0
-            peak_gpu = 0.0
-            peak_temp = 0.0
-            response_text = ""
-            
-            # Calculate input token count (approximate cost tracking)
-            prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
-            # -------------------------------
-
-            # 2. Generation Loop
-            for response in stream_generate(
-                self.model, 
-                self.tokenizer, 
-                prompt=prompt_formatted, 
-                max_tokens=request.max_tokens, 
-                sampler=sampler,
-            ):
-                # Track volume
-                tokens_generated += 1
-                
-                # Hardware poll: capture peaks during the heavy lifting
-                stats = monitor.get_snapshot()
-                if stats:
-                    peak_gpu = max(peak_gpu, stats.get("gpu_usage", 0))
-                    peak_temp = max(peak_temp, stats.get("gpu_temp", 0))
-
-                chunk = response.text or ""
-                if chunk:
-                    if response_text and chunk.startswith(response_text):
-                        response_text = chunk
-                    else:
-                        response_text += chunk
-
-                yield response.text
-
-            duration = time.time() - start_time
-            final_stats = monitor.get_snapshot()
-            
-            # Create the log entry
-            log_entry = InferenceLog(
-                request_id=getattr(request, "request_id", "unknown"),
-                adapter_name=self.adapter_id or "base",
-                prompt=request.prompt,  # Optional: remove if privacy is a concern
-                system_prompt=getattr(request, "system_prompt", None),
-                response_text=response_text,
-                tokens_in=prompt_tokens,
-                tokens_out=tokens_generated,
-                total_time_sec=duration,
-                tokens_per_sec=tokens_generated / duration if duration > 0 else 0,
-                
-                # Hardware Vitals
-                gpu_usage_pct=peak_gpu,
-                gpu_temp_c=peak_temp,
-                cpu_usage_pct=final_stats.get("cpu_usage", 0),
-                ram_usage_pct=final_stats.get("ram_usage", 0),
-                wattage=final_stats.get("gpu_power", 0),
-                
-                # Config
-                model_name=self.model_id,
-                temp=getattr(request, "temp", 0.7),
-            )
-            
-            # Fire-and-forget save to SQLite
-            asyncio.create_task(asyncio.to_thread(log_stats, log_entry))
+        while True:
+            token = await response_queue.get()
+            if token is None:
+                break
+            yield token
 
 
 # global instance

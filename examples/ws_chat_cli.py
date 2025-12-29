@@ -18,11 +18,16 @@ async def _recv_json(ws) -> dict:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="CLI client for the /ws/chat websocket endpoint.")
-    parser.add_argument("--url", default="ws://localhost:8000/ws/chat", help="Websocket URL")
+    parser = argparse.ArgumentParser(description="CLI client for the websocket chat endpoints.")
+    parser.add_argument(
+        "--url",
+        default="ws://localhost:8000/ws/chat/v2",
+        help="Websocket URL (default uses streaming/queue worker)",
+    )
     parser.add_argument("--prompt", help="Single prompt to send (skips interactive mode unless --interactive)")
     parser.add_argument("--system-prompt", default=None, help="Optional system prompt")
     parser.add_argument("--max-tokens", type=int, default=1024, help="Max tokens for generation")
+    parser.add_argument("--priority", type=int, default=10, help="Queue priority (lower = higher priority)")
     parser.add_argument("--interactive", action="store_true", help="Force interactive mode")
     args = parser.parse_args()
 
@@ -40,17 +45,42 @@ async def main():
 
             async def send_prompt(prompt: str):
                 request_id = str(uuid.uuid4())
-                payload = {"request_id": request_id, "prompt": prompt, "max_tokens": max_tokens}
+                payload = {
+                    "request_id": request_id,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "priority": args.priority,
+                }
                 if system_prompt:
                     payload["system_prompt"] = system_prompt
 
                 await ws.send(json.dumps(payload))
-                message = await _recv_json(ws)
-                if message.get("type") == "chat_response":
-                    response = message.get("response", {})
-                    logger.info("%s", response.get("text", ""))
-                    return
-                logger.info("%s", message)
+                collected = []
+
+                while True:
+                    message = await _recv_json(ws)
+                    msg_type = message.get("type")
+
+                    if msg_type == "chat_response":
+                        response = message.get("response", {})
+                        logger.info("%s", response.get("text", ""))
+                        break
+                    if msg_type == "token":
+                        chunk = message.get("content", "")
+                        collected.append(chunk)
+                        print(chunk, end="", flush=True)
+                        continue
+                    if msg_type == "end":
+                        full_text = "".join(collected)
+                        if collected:
+                            print()
+                        logger.info("%s", full_text)
+                        break
+                    if msg_type == "error":
+                        logger.error("Server error: %s", message.get("detail"))
+                        break
+
+                    logger.info("%s", message)
 
             if args.prompt:
                 await send_prompt(args.prompt)

@@ -1,0 +1,12 @@
+queue:
+  max_size: 100
+  starvation_prevention: true
+  aging_interval_sec: 60
+  default_priority: 10
+
+priorities:
+  ui: 0
+  critical: 1
+  standard: 10
+  background: 20
+

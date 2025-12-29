@@ -3,8 +3,16 @@ from app.engine import engine
 from app.schemas import GenerateRequest, GenerateResponse, AdapterLoadRequest
 from app.ws_chat import router as ws_router
 
-app = FastAPI(title="Sovereign AI Hub", version="1.0")
+app = FastAPI(title="HalaAI", version="1.0")
 app.include_router(ws_router)
+
+@app.on_event("startup")
+async def start_engine_tasks():
+    await engine.start_background_tasks()
+
+@app.on_event("shutdown")
+async def stop_engine_tasks():
+    await engine.shutdown()
 
 @app.get("/")
 def health_check():

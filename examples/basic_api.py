@@ -2,6 +2,7 @@ import logging
 
 import requests
 
+from app.config import settings
 from app.logging_setup import setup_logging
 
 setup_logging()
@@ -15,7 +16,8 @@ requests.post(f"{API_URL}/adapters/load", json={"adapter_name": "default"})
 # Ask the question
 payload = {
     "prompt": "Analyze the Giants vs Cowboys matchup.",
-    "system_prompt": "You are a sharp sports handicapper."
+    "system_prompt": "You are a sharp sports handicapper.",
+    "priority": settings.priorities.standard,  # boost the request in the queue
 }
 response = requests.post(f"{API_URL}/chat", json=payload)
 

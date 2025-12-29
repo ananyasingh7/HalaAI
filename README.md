@@ -41,6 +41,7 @@ Key behaviors are implemented in:
 - `app/ws_chat.py` for streaming WebSocket responses.
 - `app/database.py` for inference logs.
 - `app/monitor.py` for hardware stats polling.
+- `app/queue.py` for the custom priority queue that feeds the GPU worker.
 
 ## Quickstart
 
@@ -54,6 +55,14 @@ python3 -m pip install -r requirements.txt
 
 ```bash
 python3 run_server.py
+```
+
+When the server starts you should see logs for the queue worker and monitor:
+
+```
+Started background queue worker.
+Started queue monitor.
+Queue status | depth=0 ...
 ```
 
 3) (Optional) Start the Chainlit UI on a different port:
@@ -85,8 +94,17 @@ Example request:
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"Hello","max_tokens":256}'
+  -d '{"prompt":"Hello","max_tokens":256,"priority":10}'
 ```
+
+### Priority Queue
+
+- All requests flow through `app/queue.py`, a priority queue (lower number = higher priority) with optional starvation prevention.
+- The background worker in `app/engine.py` consumes from the queue and streams tokens back via WebSocket/HTTP response queues.
+- Client payloads can include `priority`; if omitted, the default from `settings.priorities.standard` is used. Examples:
+  - HTTP: `{"prompt":"...", "priority": 1}`
+  - WebSocket v2: `{ "prompt": "...", "priority": 5 }`
+- Queue health is logged periodically as `Queue status | depth=...` when running `python3 run_server.py`.
 
 ## Adapters
 
@@ -146,6 +164,16 @@ Lightweight evaluation scripts live in `evals/`.
 python evals/runners.py
 python evals/runners.py --dataset evals/datasets/golden_general.jsonl
 ```
+
+## Testing
+
+Queue-specific unit tests live in `tests/test_queue.py`. Run them with:
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+These cover priority ordering, starvation prevention, queue capacity overflow, blocking dequeue, and stats snapshots.
 
 ## Project Layout
 
