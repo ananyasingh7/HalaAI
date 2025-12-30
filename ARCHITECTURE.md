@@ -17,6 +17,21 @@ FastAPI app (app/main.py)
            -> engine.generate_stream (queue + GPU worker)
 ```
 
+## Connection Diagram (Where `main.py` Fits)
+
+```
+run_server.py
+    |
+    v
+app/main.py  ->  FastAPI app instance
+    |
+    +--> include_router(app/ws_chat.py)  ->  registers /ws/chat/v2
+    |
+    +--> defines HTTP routes (/chat, /adapters/load)
+    |
+    +--> startup/shutdown hooks (start queue worker + monitor)
+```
+
 ## Entry Points
 
 - `run_server.py` starts Uvicorn with `app.main:app`.
