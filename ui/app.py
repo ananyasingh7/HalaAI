@@ -2,7 +2,6 @@ import json
 import os
 import asyncio
 from urllib.parse import urlparse
-from urllib.parse import urlunparse
 
 import chainlit as cl
 import websockets
@@ -36,11 +35,6 @@ def _url_port(url: str) -> int | None:
     return None
 
 
-def _with_path(url: str, path: str) -> str:
-    parsed = urlparse(url)
-    return urlunparse(parsed._replace(path=path))
-
-
 def _port_conflict_hint(ws_url: str) -> str | None:
     chainlit_port = int(os.getenv("CHAINLIT_PORT", "8000"))
     ws_port = _url_port(ws_url)
@@ -50,31 +44,6 @@ def _port_conflict_hint(ws_url: str) -> str | None:
             "Run Chainlit on 8001: `CHAINLIT_PORT=8001 python3 -m chainlit run app.py -w`."
         )
     return None
-
-
-async def _diagnose_403(ws_url: str) -> str | None:
-    """
-    Starlette commonly returns HTTP 403 during websocket handshake when no websocket route matches.
-    Try v1 as a quick sanity check to help the user fix ports/restarts.
-    """
-    if not ws_url.endswith("/ws/chat/v2"):
-        return None
-
-    v1_url = _with_path(ws_url, "/ws/chat")
-    try:
-        async with websockets.connect(v1_url) as ws:
-            # v1 sends a welcome message; wait briefly to confirm.
-            await asyncio.wait_for(ws.recv(), timeout=1.0)
-        return (
-            f"`{ws_url}` is being rejected (403) but `{v1_url}` works. "
-            "This usually means the server you restarted doesn't have `/ws/chat/v2` registered yet. "
-            "Stop and restart `python3 run_server.py` after updating `app/ws_chat.py`."
-        )
-    except Exception:
-        return (
-            f"`{ws_url}` is being rejected (403). Also couldn't confirm `{v1_url}`. "
-            "Double-check `HALA_WS_URL` points to the FastAPI server (not Chainlit) and the correct port."
-        )
 
 
 @cl.on_chat_start
@@ -109,10 +78,6 @@ async def on_chat_start():
     except InvalidStatus as e:
         code = getattr(getattr(e, "response", None), "status_code", None)
         status += f" (rejected: HTTP {code or '???'})"
-        if (code or 0) == 403:
-            diag = await _diagnose_403(WS_URL)
-            if diag:
-                status += f"\n\n{diag}"
     except Exception:
         status += " (not reachable yet)"
 
@@ -151,6 +116,13 @@ async def on_message(message: cl.Message):
                 server_msg = json.loads(await ws.recv())
                 msg_type = server_msg.get("type")
 
+                if msg_type == "status":
+                    status_text = server_msg.get("content") or server_msg.get("detail") or "Thinking..."
+                    if not assembled:
+                        thinking.content = status_text
+                        await thinking.update()
+                    continue
+
                 if msg_type == "token":
                     assembled += server_msg.get("content") or ""
                     now = asyncio.get_running_loop().time()
@@ -177,10 +149,6 @@ async def on_message(message: cl.Message):
         code = getattr(getattr(e, "response", None), "status_code", None)
         hint = _port_conflict_hint(WS_URL)
         details = hint or "Make sure `python3 run_server.py` is running and `HALA_WS_URL` points to it."
-        if (code or 0) == 403:
-            diag = await _diagnose_403(WS_URL)
-            if diag:
-                details = diag
         thinking.content = f"Connection error: server rejected WebSocket connection (HTTP {code or '???'}).\n{details}"
         await thinking.update()
     except Exception as e:

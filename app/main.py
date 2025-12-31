@@ -21,7 +21,7 @@ def health_check():
 @app.post("/chat", response_model=GenerateResponse)
 async def chat_endpoint(request: GenerateRequest):
     """
-    Main endpoint for all your apps (Stock, Sports, etc.)
+    Main endpoint for all your apps 
     """
     try:
         result = await engine.generate_text(request)

@@ -11,6 +11,6 @@ langchain
 langchain-core
 sqlmodel
 psutil
-dataclasses
 chromadb
 sentence-transformers
+debugpy

@@ -1,73 +1,44 @@
 import json
 import logging
-from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import ValidationError
 
 from app.engine import engine
 from app.logging_setup import setup_logging
-from app.schemas import GenerateRequest, GenerateResponse
+from app.schemas import GenerateRequest
+from core import memory
 
 router = APIRouter()
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
-def _model_validate(model_cls, payload: Dict[str, Any]):
-    model_validate = getattr(model_cls, "model_validate", None)  # pydantic v2
-    if callable(model_validate):
-        return model_validate(payload)
-    return model_cls(**payload)  # pydantic v1
+def _build_memory_context(memories) -> str:
+    return "\n".join(f"- {fact}" for fact in memories)
 
 
-def _model_dump(model) -> Dict[str, Any]:
-    model_dump = getattr(model, "model_dump", None)  # pydantic v2
-    if callable(model_dump):
-        return model_dump()
-    return model.dict()  # pydantic v1
+async def _apply_memory_context(request: GenerateRequest, websocket: WebSocket) -> None:
+    await websocket.send_json({"type": "status", "content": "Thinking..."})
+    try:
+        memories = memory.recall(request.prompt)
+    except Exception:
+        logger.exception("Memory recall failed; continuing without context.")
+        return
 
+    if not memories:
+        return
 
-@router.websocket("/ws/chat")
-async def chat_websocket(websocket: WebSocket):
-    await websocket.accept()
-    await websocket.send_json({"type": "welcome", "current_adapter": engine.adapter_id})
+    context_block = _build_memory_context(memories)
+    original_system = request.system_prompt or ""
+    request.system_prompt = (
+        f"{original_system}\n\n"
+        f"## CONTEXT FROM MEMORY:\n"
+        f"{context_block}\n\n"
+        f"INSTRUCTION: The above memory may or may not be relevant. "
+        f"If it helps answer the user, use it. "
+        f"If it is irrelevant to the specific question (e.g. asking for live status vs static fact), IGNORE IT."
+    )
 
-    while True:
-        try:
-            raw_message = await websocket.receive_text()
-        except WebSocketDisconnect:
-            return
-
-        try:
-            payload = json.loads(raw_message)
-            if not isinstance(payload, dict):
-                raise ValueError("Message must be a JSON object")
-
-            request_id: Optional[str] = payload.get("request_id")
-            request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else payload
-
-            if request_payload is payload and "request_id" in request_payload:
-                request_payload = dict(request_payload)
-                request_payload.pop("request_id", None)
-
-            request = _model_validate(GenerateRequest, request_payload)
-            result = await engine.generate_text(request)
-            response = GenerateResponse(
-                text=result["text"],
-                token_count=result["token_count"],
-                processing_time=result["processing_time"],
-            )
-
-            message: Dict[str, Any] = {"type": "chat_response", "response": _model_dump(response)}
-            if request_id is not None:
-                message["request_id"] = request_id
-
-            await websocket.send_json(message)
-        except (json.JSONDecodeError, ValidationError, ValueError) as e:
-            await websocket.send_json({"type": "error", "detail": str(e)})
-        except Exception as e:
-            await websocket.send_json({"type": "error", "detail": str(e)})
 
 @router.websocket("/ws/chat/v2")
 async def websocket_chat(websocket: WebSocket):
@@ -83,6 +54,8 @@ async def websocket_chat(websocket: WebSocket):
 
                 # convert dict to Pydantic model
                 request = GenerateRequest(**request_data)
+
+                await _apply_memory_context(request, websocket)
 
                 # stream tokens back
                 async for token in engine.generate_stream(request):

@@ -21,6 +21,7 @@ BASE_MODEL_ID = "mlx-community/Qwen2.5-14B-Instruct-4bit"
 ADAPTERS_DIR = Path("adapters")
 
 class ModelEngine:
+    """Singleton GPU engine that manages adapters, queues, and inference."""
     _instance = None
 
     def __new__(cls):
@@ -220,6 +221,7 @@ class ModelEngine:
 
                             chunk = response.text or ""
                             if chunk:
+                                # stream_generate can emit cumulative text; keep the latest full response.
                                 if response_text and chunk.startswith(response_text):
                                     response_text = chunk
                                 else:
@@ -312,6 +314,7 @@ class ModelEngine:
         """
         await self.start_background_tasks()
 
+        # Each request has its own response queue to stream tokens back to the caller.
         response_queue: asyncio.Queue[str | None] = asyncio.Queue()
         request_id = str(uuid.uuid4())
 

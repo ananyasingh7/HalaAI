@@ -86,7 +86,6 @@ HTTP:
 - `POST /adapters/load` hot-swap LoRA adapters.
 
 WebSocket:
-- `ws://localhost:8000/ws/chat` for JSON request/response.
 - `ws://localhost:8000/ws/chat/v2` for streaming tokens.
 
 Example request:
@@ -174,6 +173,28 @@ python -m unittest discover -s tests -p "test_*.py"
 ```
 
 These cover priority ordering, starvation prevention, queue capacity overflow, blocking dequeue, and stats snapshots.
+
+## Debugging (WebSocket Path, VS Code)
+
+1) Start the FastAPI server with debugpy:
+
+```bash
+python -m debugpy --listen 5678 --wait-for-client run_server.py
+```
+
+2) Start Chainlit in another terminal:
+
+```bash
+cd ui
+CHAINLIT_PORT=8001 python3 -m chainlit run app.py -w
+```
+
+3) In VS Code, run the "Attach FastAPI (debugpy)" configuration from `.vscode/launch.json`.
+
+Suggested breakpoints:
+- `app/ws_chat.py`: `websocket_chat`, before/after memory recall.
+- `app/queue.py`: `enqueue`, `dequeue`.
+- `app/engine.py`: `generate_stream`, `_worker_loop`.
 
 ## Project Layout
 

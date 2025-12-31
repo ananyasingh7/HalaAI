@@ -6,3 +6,4 @@ ui/.chainlit/translations/
 ui/.chainlit/.langchain.db
 ui/.chainlit/
 venv/
+data/vector_db
