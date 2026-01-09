@@ -14,6 +14,8 @@ FastAPI app (app/main.py)
     |
     +--> WebSocket /ws/chat/v2 (streaming)
            -> memory recall (core/memory.py)
+           -> search intent probe (app/prompts.py)
+           -> Brave deep search + browse (core/search/brave_browse.py)
            -> engine.generate_stream (queue + GPU worker)
 ```
 
@@ -40,21 +42,23 @@ app/main.py  ->  FastAPI app instance
 ## WebSocket Streaming Flow (`/ws/chat/v2`)
 
 1) Client sends a JSON payload with `prompt`, `max_tokens`, and optional `system_prompt` + `priority`.
-2) `app/ws_chat.py` parses the request and emits a `{"type": "status"}` message (e.g., "Thinking...").
-3) The API layer calls `core.memory.recall(prompt)` and, if hits are found, injects them into
-   `request.system_prompt` as a hidden context block.
-4) `engine.generate_stream(request)` enqueues a job in `app/queue.py`.
-5) The GPU worker (`ModelEngine._worker_loop` in `app/engine.py`) consumes the job, runs
+2) `app/ws_chat.py` emits a `{"type": "status"}` message (e.g., "Thinking...").
+3) The API layer calls `core.memory.recall(prompt)` and builds a base system prompt via `app/prompts.py`.
+4) A short "search-intent probe" pass is run to detect a `[SEARCH: ...]` command.
+5) If search is requested, `core/search/brave_browse.py` performs Brave search + page scraping.
+6) Search results are formatted via `app/prompts.py` and injected into the system prompt.
+7) `engine.generate_stream(request)` enqueues a job in `app/queue.py`.
+8) The GPU worker (`ModelEngine._worker_loop` in `app/engine.py`) consumes the job, runs
    `stream_generate`, and pushes tokens onto the response queue.
-6) `app/ws_chat.py` streams tokens back as `{"type": "token"}` messages and finishes with
+9) `app/ws_chat.py` streams tokens back as `{"type": "token"}` messages and finishes with
    `{"type": "end"}`.
-7) Inference stats are logged via `app/database.py`, and hardware metrics come from `app/monitor.py`.
+10) Inference stats are logged via `app/database.py`, and hardware metrics come from `app/monitor.py`.
 
 ## HTTP Blocking Flow (`/chat`)
 
 - `app/main.py` receives a POST request and calls `engine.generate_text`.
 - This path runs inference directly under the engine lock (no queue, no streaming).
-- Memory recall is not applied here; it is only done in the WebSocket API layer.
+- Memory recall and deep search are not applied here; they are only done in the WebSocket API layer.
 
 ## Memory (RAG) Flow
 

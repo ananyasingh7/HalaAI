@@ -33,15 +33,19 @@ FastAPI server (HTTP + WebSocket)
 ModelEngine singleton (MLX)
         |
         +--> LoRA adapters (hot swap)
+        +--> Deep Search (Brave + Browse)
         +--> SQLite logs + hardware monitor
 ```
 
 Key behaviors are implemented in:
 - `app/engine.py` for the singleton engine, adapter swapping, and GPU lock.
 - `app/ws_chat.py` for streaming WebSocket responses.
+- `app/prompts.py` for the system prompt, tool protocol, and search context formatting.
 - `app/database.py` for inference logs.
 - `app/monitor.py` for hardware stats polling.
 - `app/queue.py` for the custom priority queue that feeds the GPU worker.
+- `core/search/brave_browse.py` for Brave Search + page scraping.
+- `core/search/browser.py` for text extraction (Trafilatura-based).
 
 ## Quickstart
 
@@ -211,3 +215,50 @@ Suggested breakpoints:
 Local tests on the Mac Studio M4 show:
 - ~30 tokens/sec streaming throughput.
 - Adapter fine-tuning retained personal facts without degrading general reasoning in the "golden dataset" checks.
+
+## Deep Search + Browsing (Brave)
+
+HalaAI supports a "deep search" flow that automatically searches the web and scrapes the top results. The LLM triggers search by emitting:
+
+```
+[SEARCH: <query>]
+```
+
+What happens next:
+1) `app/ws_chat.py` runs a short search-intent probe to detect a `[SEARCH: ...]` command.
+2) `core/search/brave_browse.py` calls the Brave Web Search API and scrapes the top results.
+3) Scraped text is attached to each result object as `content` (up to 25,000 chars per page).
+4) `app/prompts.py` formats a "Deep Search Results" block and injects it into the system prompt.
+5) The LLM answers using the supplied sources.
+
+### Scraping Notes
+
+- `core/search/browser.py` uses Trafilatura to extract clean page text.
+- JS-heavy pages that fail extraction are skipped.
+- Wikipedia results are prioritised when present.
+
+### Prompting
+
+- The system prompt is assembled in `app/prompts.py`.
+- It includes persona, tool protocol, date grounding, and (optionally) memory + search results.
+- If no search data is available, the LLM is instructed to emit a `[SEARCH: ...]` command.
+
+## Constraints & Rate Limiting (Brave API)
+
+The Brave API is quota-limited, so HalaAI enforces guardrails:
+
+- Configuration: `config/brave_search_limits.json`
+  - `monthly_limit` (default 1000)
+  - `billing_day` (billing cycle start day of month)
+  - `daily_limit_strategy` (`"remaining_per_day"`)
+- Usage state: `config/brave_search_usage.json` (auto-updated)
+  - `period_start`, `count`, and per-day counts
+
+Behaviour:
+- Only successful HTTP 200 responses increment usage.
+- A rolling daily budget is computed from remaining quota and days in the billing period.
+- When the monthly or daily budget is exhausted, the search tool returns an error string
+  instead of calling the API.
+
+Operational target:
+- Aim for ~30 Brave requests per day to stay well under the 1,000/month cap.
