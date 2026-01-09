@@ -132,7 +132,7 @@ curl -X POST http://localhost:8000/adapters/load \
 - Roughly 4x human reading speed (~5-8 tokens/sec).
 - Total time vs tokens-out is linear, indicating stable throughput as responses get longer.
 
-![Inference stats](perfomance/inference_stats_12-26-2025.png)
+![Inference stats](performance/inference_stats_12-26-2025.png)
 
 ### Evals
 
