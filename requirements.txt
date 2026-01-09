@@ -16,3 +16,5 @@ sentence-transformers
 debugpy
 dotenv
 aiohttp
+trafilatura
+lxml_html_clean
