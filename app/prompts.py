@@ -29,13 +29,18 @@ You have access to a powerful **Deep Search Engine**.
 2. **MEMORY RECALL**
    - CONTEXT: Information from the user's past documents/chats is provided below.
    - RULE: Prioritize this over general training for personal questions.
+
+3. **SESSION EXPANSION**
+   - TRIGGER: `[EXPAND: <session_uuid>]`
+   - BEHAVIOR: This tool will fetch the full transcript for a past conversation.
+   - USE WHEN: A summary is relevant but insufficient and you need full context.
 """
 
 # 3. SAFETY & DATES
 SAFETY_PROTOCOL = """
 ### OPERATIONAL RULES:
 1. **NO HALLUCINATIONS:** If the Search/Memory yields nothing, admit it.
-2. **TEMPORAL AWARENESS:** Today is {current_date}.
+2. **TEMPORAL AWARENESS:** Current local date/time is {current_datetime}.
 3. **SOVEREIGNTY:** You run offline on a Mac Studio M4.
 """
 
@@ -76,22 +81,103 @@ def format_search_results(browse_data: Dict[str, Any], max_chars_per_result: int
     return formatted_text
 
 
-def build_system_prompt(memories: list[str] = None, search_context: str = None) -> str:
+def format_chat_history(history: list[Dict[str, Any]], max_messages: int = 16) -> str:
+    if not history:
+        return ""
+
+    trimmed = history[-max_messages:] if max_messages else history
+    lines = []
+    for msg in trimmed:
+        role = str(msg.get("role", "unknown")).upper()
+        content = msg.get("content", "")
+        if content:
+            lines.append(f"{role}: {content}")
+
+    if not lines:
+        return ""
+
+    return (
+        "### CURRENT DIALOGUE CONTEXT (PRIOR MESSAGES; REFERENCE ONLY)\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+def format_session_summaries(summaries: list[Dict[str, Any]]) -> str:
+    if not summaries:
+        return ""
+
+    block = "### RELATED PAST CONVERSATIONS (SUMMARIES)\n"
+    for item in summaries:
+        session_id = item.get("id", "unknown")
+        title = item.get("title", "Untitled")
+        summary = item.get("summary", "")
+        block += f"[SESSION {session_id}] {title}\n{summary}\n\n"
+
+    block += "INSTRUCTION: If you need a full transcript, respond with [EXPAND: <session_uuid>].\n"
+    return block
+
+
+def format_expanded_transcripts(transcripts: list[str]) -> str:
+    if not transcripts:
+        return ""
+
+    joined = "\n\n".join(transcripts)
+    return (
+        "### PAST CONVERSATION TRANSCRIPTS (PRIOR DIALOGUE; REFERENCE ONLY)\n"
+        + joined
+        + "\n"
+    )
+
+
+SUMMARY_SYSTEM_PROMPT = """
+You are Hala Scribe. Summarise the conversation transcript.
+Rules:
+- Use ONLY the transcript provided.
+- Do NOT use external knowledge or tools.
+- Return ONLY valid JSON with keys: "title" and "summary".
+- Title: concise, max ~8 words.
+- Summary: 2-5 sentences, neutral tone.
+"""
+
+
+def build_system_prompt(
+    memories: list[str] = None,
+    search_context: str = None,
+    chat_history: list[Dict[str, Any]] | None = None,
+    related_summaries: list[Dict[str, Any]] | None = None,
+    expanded_transcripts: list[str] | None = None,
+) -> str:
     """
     Constructs the final system prompt dynamically.
     Args:
         memories: List of strings from VectorDB
         search_context: Pre-formatted string from format_search_results()
     """
-    current_date = datetime.now().strftime("%A, %B %d, %Y")
+    current_datetime = datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
     
     # 1. Memory Block
     if memories:
-        memory_block = "\n### 🧠 LONG-TERM MEMORY:\n" + "\n".join([f"- {m}" for m in memories]) + "\n"
+        memory_block = (
+            "\n### VERIFIED USER PROFILE (SYSTEM ACCESS GRANTED):\n"
+            "The following data is strictly verified system records about the user. "
+            "You MUST use this data to answer questions about the user's identity. "
+            "Do NOT claim you do not know the user.\n"
+            + "\n".join([f"- {m}" for m in memories]) + "\n"
+        )
     else:
         memory_block = ""
 
-    # 2. Search Block (Dynamic Injection)
+    # 2. Current dialogue block
+    chat_block = format_chat_history(chat_history or [])
+
+    # 3. Related summaries block
+    summaries_block = format_session_summaries(related_summaries or [])
+
+    # 4. Expanded transcripts block
+    expanded_block = format_expanded_transcripts(expanded_transcripts or [])
+
+    # 5. Search Block (Dynamic Injection)
     # If we just performed a search, this variable will contain the data
     web_block = ""
     if search_context:
@@ -103,9 +189,15 @@ def build_system_prompt(memories: list[str] = None, search_context: str = None) 
 
 {TOOL_INSTRUCTIONS}
 
-{SAFETY_PROTOCOL.format(current_date=current_date)}
+{SAFETY_PROTOCOL.format(current_datetime=current_datetime)}
 
 {memory_block}
+
+{chat_block}
+
+{summaries_block}
+
+{expanded_block}
 
 {web_block}
 

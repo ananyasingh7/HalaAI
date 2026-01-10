@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import uuid
 from urllib.parse import urlparse
 
 import chainlit as cl
@@ -48,6 +49,9 @@ def _port_conflict_hint(ws_url: str) -> str | None:
 
 @cl.on_chat_start
 async def on_chat_start():
+    session_id = str(uuid.uuid4())
+    cl.user_session.set("session_id", session_id)
+
     settings = await cl.ChatSettings(
         [
             cl.input_widget.TextInput(
@@ -72,8 +76,11 @@ async def on_chat_start():
     status = f"WS: `{WS_URL}`"
     try:
         async with websockets.connect(WS_URL) as ws:
-            # v2 does not send an initial "welcome" message. Connecting successfully is enough.
-            await ws.close()
+            await ws.send(json.dumps({"type": "session_start", "session_id": session_id}))
+            try:
+                await ws.recv()
+            except Exception:
+                pass
         status += " (ok)"
     except InvalidStatus as e:
         code = getattr(getattr(e, "response", None), "status_code", None)
@@ -98,13 +105,18 @@ async def on_settings_update(settings):
 async def on_message(message: cl.Message):
     system_prompt = cl.user_session.get("system_prompt")
     max_tokens = cl.user_session.get("max_tokens") or 1024
+    session_id = cl.user_session.get("session_id")
 
     thinking = cl.Message(content="...")
     await thinking.send()
 
     try:
         async with websockets.connect(WS_URL) as ws:
-            payload = {"prompt": message.content, "max_tokens": int(max_tokens)}
+            payload = {
+                "prompt": message.content,
+                "max_tokens": int(max_tokens),
+                "session_id": session_id,
+            }
             if system_prompt:
                 payload["system_prompt"] = system_prompt
 
@@ -154,3 +166,19 @@ async def on_message(message: cl.Message):
     except Exception as e:
         thinking.content = f"Connection error: {e}"
         await thinking.update()
+
+
+@cl.on_chat_end
+async def on_chat_end():
+    session_id = cl.user_session.get("session_id")
+    if not session_id:
+        return
+    try:
+        async with websockets.connect(WS_URL) as ws:
+            await ws.send(json.dumps({"type": "session_end", "session_id": session_id}))
+            try:
+                await ws.recv()
+            except Exception:
+                pass
+    except Exception:
+        pass

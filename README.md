@@ -34,6 +34,7 @@ ModelEngine singleton (MLX)
         |
         +--> LoRA adapters (hot swap)
         +--> Deep Search (Brave + Browse)
+        +--> Session DB (Postgres) + VectorDB (Chroma)
         +--> SQLite logs + hardware monitor
 ```
 
@@ -41,11 +42,14 @@ Key behaviors are implemented in:
 - `app/engine.py` for the singleton engine, adapter swapping, and GPU lock.
 - `app/ws_chat.py` for streaming WebSocket responses.
 - `app/prompts.py` for the system prompt, tool protocol, and search context formatting.
+- `app/session_manager.py` for session persistence + summarisation + sweeper.
 - `app/database.py` for inference logs.
 - `app/monitor.py` for hardware stats polling.
 - `app/queue.py` for the custom priority queue that feeds the GPU worker.
 - `core/search/brave_browse.py` for Brave Search + page scraping.
 - `core/search/browser.py` for text extraction (Trafilatura-based).
+- `data/sql/database.py` for the Postgres-backed sessions table.
+- `data/sql/expander.py` for expanding full transcripts by UUID.
 
 ## Quickstart
 
@@ -82,6 +86,12 @@ If your server runs elsewhere, set:
 HALA_WS_URL=ws://localhost:8000/ws/chat/v2
 ```
 
+History DB connection (optional override):
+
+```bash
+HALA_HISTORY_DB_URL=postgresql://USER@localhost:5432/hala_ai_history
+```
+
 ## API Overview
 
 HTTP:
@@ -92,6 +102,11 @@ HTTP:
 WebSocket:
 - `ws://localhost:8000/ws/chat/v2` for streaming tokens.
 
+Data APIs:
+- `GET /data/sessions` list all chat sessions (Postgres).
+- `GET /data/session?session_id=<uuid>` fetch a single session.
+- `POST /data/vector/search` semantic search over the vector DB.
+
 Example request:
 
 ```bash
@@ -99,6 +114,9 @@ curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Hello","max_tokens":256,"priority":10}'
 ```
+
+WebSocket payloads should include `session_id` so history is stored per chat.
+The UI sends `{"type": "session_start"}` on open and `{"type": "session_end"}` on close.
 
 ### Priority Queue
 
@@ -207,8 +225,8 @@ Suggested breakpoints:
 - `examples/` API, WebSocket, and LangChain integration samples.
 - `adapters/` LoRA adapter weights and config.
 - `evals/` evaluation scripts and reports.
-- `data/` fine-tuning datasets.
-- `perfomance/` performance logs and plots.
+- `data/` vector DB, SQL helpers, data services, and datasets.
+- `performance/` performance logs and plots.
 
 ## Performance Notes
 
@@ -240,8 +258,42 @@ What happens next:
 ### Prompting
 
 - The system prompt is assembled in `app/prompts.py`.
-- It includes persona, tool protocol, date grounding, and (optionally) memory + search results.
+- It includes persona, tool protocol, exact local date/time, and (optionally) system-verified user profile + search results.
 - If no search data is available, the LLM is instructed to emit a `[SEARCH: ...]` command.
+
+## Session Memory + Summaries
+
+HalaAI maintains both short-term chat history and long-term summaries:
+
+- **Live chat history**: each message is appended to Postgres (`sessions.history`).
+- **Summaries**: when a session closes (or goes idle), a summary/title is generated and stored in Postgres.
+- **VectorDB**: summaries are embedded into Chroma (`source="chat_summary"`) for semantic recall.
+
+### Session lifecycle (WebSocket)
+
+1) Chainlit generates a `session_id` on chat start and sends `{"type": "session_start"}`.
+2) Each message includes `session_id` and is appended to `sessions.history`.
+3) On UI close, `{"type": "session_end"}` triggers summarisation.
+4) A background sweeper runs every 30 minutes and auto-closes sessions idle for ~10 minutes.
+
+### Resetting data stores
+
+To wipe both Postgres session history and the Chroma vector DB:
+
+```bash
+python3 data/reset_datastores.py
+```
+
+### Session Expansion
+
+If the model needs full history, it can emit:
+
+```
+[EXPAND: <session_uuid>]
+```
+
+The server fetches the full transcript from Postgres and injects it into the prompt as
+**prior dialogue context**.
 
 ## Constraints & Rate Limiting (Brave API)
 
@@ -262,3 +314,25 @@ Behaviour:
 
 Operational target:
 - Aim for ~30 Brave requests per day to stay well under the 1,000/month cap.
+
+## Data Services (API)
+
+List sessions:
+
+```bash
+curl -s http://localhost:8000/data/sessions
+```
+
+Fetch a session:
+
+```bash
+curl -s "http://localhost:8000/data/session?session_id=YOUR_UUID"
+```
+
+Vector search:
+
+```bash
+curl -X POST http://localhost:8000/data/vector/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"recent chat about football","n_results":5,"threshold":1.2,"where":{"source":"chat_summary"}}'
+```

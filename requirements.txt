@@ -18,3 +18,5 @@ dotenv
 aiohttp
 trafilatura
 lxml_html_clean
+psycopg2-binary
+sqlalchemy

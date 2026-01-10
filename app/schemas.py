@@ -7,6 +7,7 @@ class GenerateRequest(BaseModel):
     max_tokens: int = 1024
     system_prompt: Optional[str] = None
     priority: int = Field(default=settings.priorities.standard)
+    session_id: Optional[str] = None
 
 class GenerateResponse(BaseModel):
     text: str
