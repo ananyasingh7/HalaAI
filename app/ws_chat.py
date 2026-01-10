@@ -127,7 +127,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 session_id = await ensure_session(request.session_id)
                 history = []
-                if session_id:
+                if session_id and request.include_history:
                     history = await fetch_session_history(session_id)
 
                 memories = await _recall_memories(request.prompt)
@@ -135,7 +135,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 base_system = build_system_prompt(
                     memories=memories,
-                    chat_history=history,
+                    chat_history=history if request.include_history else [],
                     related_summaries=summaries,
                 )
                 base_system = _append_user_system_prompt(base_system, request.system_prompt)
@@ -194,7 +194,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 final_system = build_system_prompt(
                     memories=memories,
-                    chat_history=history,
+                    chat_history=history if request.include_history else [],
                     related_summaries=summaries,
                     expanded_transcripts=expanded_transcripts,
                     search_context=search_context,

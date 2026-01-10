@@ -49,6 +49,7 @@ app/main.py  ->  FastAPI app instance
 1) Client sends `session_start` with `session_id`, then messages containing `prompt`, `max_tokens`, and optional `system_prompt` + `priority`.
 2) `app/ws_chat.py` emits a `{"type": "status"}` message (e.g., "Thinking...").
 3) The session is created/updated in Postgres and the message is appended to `sessions.history`.
+   If `include_history` is false, history is still stored but not injected into the prompt.
 4) The API layer recalls:
    - verified user profile (memory recall),
    - related chat summaries (vector DB),

@@ -8,6 +8,7 @@ class GenerateRequest(BaseModel):
     system_prompt: Optional[str] = None
     priority: int = Field(default=settings.priorities.standard)
     session_id: Optional[str] = None
+    include_history: Optional[bool] = True
 
 class GenerateResponse(BaseModel):
     text: str

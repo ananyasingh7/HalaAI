@@ -117,6 +117,8 @@ curl -X POST http://localhost:8000/chat \
 
 WebSocket payloads should include `session_id` so history is stored per chat.
 The UI sends `{"type": "session_start"}` on open and `{"type": "session_end"}` on close.
+If you want session logging but do **not** want history injected into the prompt,
+set `include_history: false` on each request.
 
 ### Priority Queue
 

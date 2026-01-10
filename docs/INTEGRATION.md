@@ -32,6 +32,7 @@ Each message should include the same `session_id` so chat history is persisted:
   "prompt": "Who won the Super Bowl?",
   "max_tokens": 512,
   "session_id": "UUID",
+  "include_history": true,
   "system_prompt": "Optional system override"
 }
 ```
@@ -39,6 +40,7 @@ Each message should include the same `session_id` so chat history is persisted:
 Optional fields:
 - `priority` (lower = higher priority; defaults to standard)
 - `system_prompt` (appends to the base system prompt)
+- `include_history` (if false, history is still stored but NOT injected into the prompt)
 
 ### 3) Receive messages
 
