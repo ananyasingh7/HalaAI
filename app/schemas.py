@@ -9,6 +9,7 @@ class GenerateRequest(BaseModel):
     priority: int = Field(default=settings.priorities.standard)
     session_id: Optional[str] = None
     include_history: Optional[bool] = True
+    history_window: Optional[int] = 16
 
 class GenerateResponse(BaseModel):
     text: str
