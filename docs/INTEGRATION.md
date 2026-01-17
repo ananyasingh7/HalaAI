@@ -10,6 +10,7 @@ This document explains how to connect to HalaAI from another repo or workspace.
   - `GET /data/sessions`
   - `GET /data/session?session_id=<uuid>`
   - `GET /data/summaries`
+  - `DELETE /data/session?session_id=<uuid>`
   - `POST /data/vector/search`
 
 ## WebSocket Protocol (Streaming)
@@ -113,6 +114,12 @@ List summaries:
 
 ```bash
 curl -s http://localhost:8000/data/summaries
+```
+
+Delete a session:
+
+```bash
+curl -X DELETE "http://localhost:8000/data/session?session_id=YOUR_UUID"
 ```
 
 Vector search:

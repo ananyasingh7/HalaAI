@@ -142,3 +142,13 @@ def list_active_sessions_older_than(cutoff: datetime) -> List[ChatSession]:
         )
         results = db.exec(statement).all()
         return list(results)
+
+
+def delete_session(session_id: uuid.UUID) -> bool:
+    with Session(engine) as db:
+        chat_session = db.get(ChatSession, session_id)
+        if not chat_session:
+            return False
+        db.delete(chat_session)
+        db.commit()
+        return True

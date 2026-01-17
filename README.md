@@ -106,6 +106,7 @@ Data APIs:
 - `GET /data/sessions` list all chat sessions (Postgres).
 - `GET /data/session?session_id=<uuid>` fetch a single session.
 - `GET /data/summaries` list all summaries with UUIDs.
+- `DELETE /data/session?session_id=<uuid>` delete a session.
 - `POST /data/vector/search` semantic search over the vector DB.
 
 Example request:

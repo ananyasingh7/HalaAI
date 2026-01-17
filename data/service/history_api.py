@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.logging_setup import setup_logging
-from data.sql.database import engine, ChatSession
+from data.sql.database import engine, ChatSession, delete_session
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -46,6 +46,18 @@ def get_session(session_id: str = Query(..., description="Session UUID")):
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         return _session_to_dict(session)
+
+
+@router.delete("/session")
+def remove_session(session_id: str = Query(..., description="Session UUID")):
+    try:
+        parsed = uuid.UUID(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid session_id UUID") from e
+
+    if not delete_session(parsed):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "deleted", "session_id": session_id}
 
 
 @router.get("/summaries")
