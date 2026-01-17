@@ -105,6 +105,7 @@ WebSocket:
 Data APIs:
 - `GET /data/sessions` list all chat sessions (Postgres).
 - `GET /data/session?session_id=<uuid>` fetch a single session.
+- `GET /data/summaries` list all summaries with UUIDs.
 - `POST /data/vector/search` semantic search over the vector DB.
 
 Example request:
@@ -272,6 +273,12 @@ HalaAI maintains both short-term chat history and long-term summaries:
 - **Summaries**: when a session closes (or goes idle), a summary/title is generated and stored in Postgres.
 - **VectorDB**: summaries are embedded into Chroma (`source="chat_summary"`) for semantic recall.
 
+Schema highlights (Postgres `sessions`):
+- `id` (UUID), `title`, `summary`
+- `created_at`, `last_active_at`, `updated_at`
+- `is_active`, `is_summarized`
+- `history` (JSONB transcript)
+
 ### Session lifecycle (WebSocket)
 
 1) Chainlit generates a `session_id` on chat start and sends `{"type": "session_start"}`.
@@ -330,6 +337,12 @@ Fetch a session:
 
 ```bash
 curl -s "http://localhost:8000/data/session?session_id=YOUR_UUID"
+```
+
+List summaries:
+
+```bash
+curl -s http://localhost:8000/data/summaries
 ```
 
 Vector search:

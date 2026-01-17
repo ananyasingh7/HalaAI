@@ -32,6 +32,7 @@ app/main.py  ->  FastAPI app instance
     |
     +--> include_router(app/ws_chat.py)  ->  registers /ws/chat/v2
     +--> include_router(data/service/history_api.py) -> /data/sessions + /data/session
+    +--> include_router(data/service/history_api.py) -> /data/summaries
     +--> include_router(data/service/vector_api.py)  -> /data/vector/search
     |
     +--> defines HTTP routes (/chat, /adapters/load)

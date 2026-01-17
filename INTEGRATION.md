@@ -9,7 +9,6 @@ This document explains how to connect to HalaAI from another repo or workspace.
 - Data APIs:
   - `GET /data/sessions`
   - `GET /data/session?session_id=<uuid>`
-  - `GET /data/summaries`
   - `POST /data/vector/search`
 
 ## WebSocket Protocol (Streaming)
@@ -107,12 +106,6 @@ Fetch one session:
 
 ```bash
 curl -s "http://localhost:8000/data/session?session_id=YOUR_UUID"
-```
-
-List summaries:
-
-```bash
-curl -s http://localhost:8000/data/summaries
 ```
 
 Vector search:

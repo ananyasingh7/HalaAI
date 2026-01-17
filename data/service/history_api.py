@@ -46,3 +46,19 @@ def get_session(session_id: str = Query(..., description="Session UUID")):
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         return _session_to_dict(session)
+
+
+@router.get("/summaries")
+def list_summaries():
+    with Session(engine) as db:
+        rows = db.exec(select(ChatSession).where(ChatSession.is_summarized == True)).all()  # noqa: E712
+        return [
+            {
+                "id": str(row.id),
+                "title": row.title,
+                "summary": row.summary,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
