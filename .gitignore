@@ -10,3 +10,4 @@ data/vector_db
 inference_logs.db
 .env
 .DS_STORE
+.vscode/
