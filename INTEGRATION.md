@@ -9,6 +9,7 @@ This document explains how to connect to HalaAI from another repo or workspace.
 - Data APIs:
   - `GET /data/sessions`
   - `GET /data/session?session_id=<uuid>`
+  - `GET /data/summaries`
   - `DELETE /data/session?session_id=<uuid>`
   - `POST /data/vector/search`
 
@@ -107,6 +108,12 @@ Fetch one session:
 
 ```bash
 curl -s "http://localhost:8000/data/session?session_id=YOUR_UUID"
+```
+
+List summaries:
+
+```bash
+curl -s http://localhost:8000/data/summaries
 ```
 
 Vector search:

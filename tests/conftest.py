@@ -1,5 +1,3 @@
-"""Test package setup for import resolution."""
-
 import sys
 from pathlib import Path
 

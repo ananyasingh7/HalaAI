@@ -201,6 +201,12 @@ python -m unittest discover -s tests -p "test_*.py"
 
 These cover priority ordering, starvation prevention, queue capacity overflow, blocking dequeue, and stats snapshots.
 
+Additional unit tests cover prompts, memory, search helpers, session management, and data APIs. Run the full suite with:
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```
+
 ## Debugging (WebSocket Path, VS Code)
 
 1) Start the FastAPI server with debugpy:
