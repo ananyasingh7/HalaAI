@@ -31,6 +31,8 @@ class HardwareMonitor:
             "gpu_temp": 0.0,
             "cpu_usage": 0.0,
             "ram_usage": 0.0,
+            "system_ram_gb": 0.0,
+            "process_ram_gb": 0.0,
             "soc_temp": 0.0
         }
         self.running = False
@@ -78,6 +80,7 @@ class HardwareMonitor:
     def _monitor_loop(self):
         """Reads stream from macmon and updates stats"""
         process = None
+        current_process = psutil.Process()
         if self.has_macmon:
             # Run macmon in pipe mode to get JSON stream
             process = subprocess.Popen(
@@ -91,8 +94,13 @@ class HardwareMonitor:
         while self.running:
             try:
                 # Get Standard Stats (CPU/RAM) via psutil
+                vm = psutil.virtual_memory()
                 self.latest_stats["cpu_usage"] = psutil.cpu_percent(interval=None)
-                self.latest_stats["ram_usage"] = psutil.virtual_memory().percent
+                self.latest_stats["ram_usage"] = vm.percent
+                self.latest_stats["system_ram_gb"] = vm.used / (1024**3)
+                
+                # Process-specific RAM (RSS)
+                self.latest_stats["process_ram_gb"] = current_process.memory_info().rss / (1024**3)
 
                 # Get Apple Silicon Stats via macmon
                 if process and process.stdout:

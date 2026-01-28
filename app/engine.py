@@ -233,6 +233,16 @@ class ModelEngine:
                         duration = time.time() - start_time
                         final_stats = monitor.get_snapshot()
 
+                    tps = tokens_generated / duration if duration > 0 else 0
+                    logger.info(
+                        "Finished job %s in %.2fs | Speed: %.1f t/s | RAM: Process=%.1fGB System=%.1fGB",
+                        job.request_id,
+                        duration,
+                        tps,
+                        final_stats.get("process_ram_gb", 0),
+                        final_stats.get("system_ram_gb", 0),
+                    )
+
                     await response_queue.put(None)  # Signal completion
 
                     log_entry = InferenceLog(
