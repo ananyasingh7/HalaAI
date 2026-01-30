@@ -5,13 +5,30 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from core.search import brave_browse
 
 
 class BraveBrowseTests(unittest.IsolatedAsyncioTestCase):
+    def test_blocklist_matches_domain(self):
+        blocklist = ["example.com"]
+        self.assertTrue(brave_browse._is_blocklisted("https://example.com/page", blocklist))
+        self.assertTrue(brave_browse._is_blocklisted("https://www.example.com/page", blocklist))
+        self.assertTrue(brave_browse._is_blocklisted("https://sub.example.com/page", blocklist))
+        self.assertFalse(brave_browse._is_blocklisted("https://example.org/page", blocklist))
+
+    def test_load_blocklist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blocklist.json"
+            path.write_text(json.dumps(["example.com", "test.com"]))
+            with patch.object(brave_browse, "BLOCKLIST_PATH", path):
+                items = brave_browse._load_blocklist()
+        self.assertEqual(items, ["example.com", "test.com"])
     def test_prioritize_wikipedia(self):
         results = [
             {"url": "https://example.com"},

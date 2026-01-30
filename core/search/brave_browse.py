@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from dotenv import load_dotenv
@@ -21,6 +23,30 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY")
+BLOCKLIST_PATH = ROOT_DIR / "config" / "search_blocklist.json"
+
+
+def _load_blocklist() -> list[str]:
+    try:
+        with BLOCKLIST_PATH.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return [str(item).strip().lower() for item in data if str(item).strip()]
+    return []
+
+
+def _is_blocklisted(url: str, blocklist: list[str]) -> bool:
+    if not url:
+        return False
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    for blocked in blocklist:
+        if host == blocked or host.endswith(f".{blocked}"):
+            return True
+    return False
 
 
 def _prioritize_wikipedia(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -98,7 +124,14 @@ async def search_and_browse(
                 if not web_results:
                     return "No relevant results found on the internet."
 
-                selected = _prioritize_wikipedia(web_results[:num_results])
+                blocklist = _load_blocklist()
+                filtered = [
+                    item for item in web_results if not _is_blocklisted(item.get("url", ""), blocklist)
+                ]
+                if not filtered:
+                    return "No accessible results found on the internet."
+
+                selected = _prioritize_wikipedia(filtered[:num_results])
                 sanitized = [_sanitize_result(item) for item in selected]
 
                 tasks = [
@@ -106,8 +139,11 @@ async def search_and_browse(
                     for item in sanitized
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
+                accessible = [item for item in sanitized if item.get("content")]
+                if not accessible:
+                    return "No accessible results found on the internet."
 
-                return {"query": query, "results": sanitized}
+                return {"query": query, "results": accessible}
 
     except Exception as e:
         return f"[Search Exception: {str(e)}]"

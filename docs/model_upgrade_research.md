@@ -2,6 +2,10 @@
 
 Date: 2026-01-28
 
+Status update (2026-01-29):
+- Base model switched to `mlx-community/Qwen3-30B-A3B-4bit`.
+- Legacy throughput baselines reference the prior 14B model; re-benchmark for Qwen3.
+
 ## Scope
 These notes summarize the research and reasoning behind three upgrade candidates for HalaAI on a Mac Studio M4 base system:
 
@@ -13,8 +17,8 @@ This document is intentionally practical: it blends public model cards/tech repo
 
 ## System Baseline (Local)
 - Hardware: Mac Studio M4 base (14-core CPU, 32-core GPU, 36GB unified memory, 410GB/s memory bandwidth).
-- Current base model: Qwen2.5-14B-Instruct-4bit (MLX).
-- Observed throughput: ~29.8 tokens/sec avg with peaks ~38 t/s (from HalaAI README).
+- Current base model: Qwen3-30B-A3B-4bit (MLX).
+- Legacy throughput: ~29.8 tokens/sec avg with peaks ~38 t/s on Qwen2.5-14B (from HalaAI README).
 
 ## Public Sources Used (Summary)
 - Apple Mac Studio M4 Max specs (CPU/GPU/memory/bandwidth).

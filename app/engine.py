@@ -4,6 +4,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import AsyncGenerator
+import re
 
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -17,7 +18,7 @@ from app.queue import request_queue, QueueItem
 setup_logging()
 logger = logging.getLogger(__name__)
 
-BASE_MODEL_ID = "mlx-community/Qwen2.5-14B-Instruct-4bit"
+BASE_MODEL_ID = "mlx-community/Qwen3-30B-A3B-4bit"
 ADAPTERS_DIR = Path("adapters")
 
 class ModelEngine:
@@ -54,6 +55,60 @@ class ModelEngine:
         self.model, self.tokenizer = load(self.model_id)
         self._initialized = True
         logger.info("Engine Online. Ready for inference.")
+
+    def _apply_chat_template(self, messages: list[dict], disable_thinking: bool = False) -> str:
+        """
+        Use the tokenizer chat template while disabling Qwen3 "thinking" output when supported.
+        Falls back to the legacy signature for older tokenizers.
+        """
+        if disable_thinking:
+            try:
+                return self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+                )
+            except TypeError:
+                return self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+        return self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+    def _strip_thinking(self, text: str) -> str:
+        if not text:
+            return text
+        return re.sub(r"<think>.*?</think>\n*", "", text, flags=re.DOTALL)
+
+    def _strip_thinking_stream(self, text: str, in_think: bool) -> tuple[str, bool]:
+        """
+        Strip <think>...</think> spans from a streamed chunk, preserving state across chunks.
+        Returns (clean_text, in_think_state).
+        """
+        if not text:
+            return "", in_think
+
+        out = []
+        i = 0
+        while i < len(text):
+            if in_think:
+                end = text.find("</think>", i)
+                if end == -1:
+                    return "".join(out), True
+                i = end + len("</think>")
+                if i < len(text) and text[i] == "\n":
+                    i += 1
+                in_think = False
+                continue
+
+            start = text.find("<think>", i)
+            if start == -1:
+                out.append(text[i:])
+                return "".join(out), False
+            out.append(text[i:start])
+            i = start + len("<think>")
+            in_think = True
+
+        return "".join(out), in_think
 
     def _resolve_adapter_path(self, adapter_name: str) -> Path:
         """
@@ -186,8 +241,8 @@ class ModelEngine:
                         messages.append({"role": "system", "content": req.system_prompt})
                     messages.append({"role": "user", "content": req.prompt})
 
-                    prompt_formatted = self.tokenizer.apply_chat_template(
-                        messages, tokenize=False, add_generation_prompt=True
+                    prompt_formatted = self._apply_chat_template(
+                        messages, disable_thinking=getattr(req, "_disable_thinking", False)
                     )
 
                     sampler = make_sampler(
@@ -203,6 +258,9 @@ class ModelEngine:
                         peak_gpu = 0.0
                         peak_temp = 0.0
                         response_text = ""
+                        clean_response_text = ""
+                        last_raw = ""
+                        in_think = False
                         prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
 
                         for response in stream_generate(
@@ -227,8 +285,17 @@ class ModelEngine:
                                 else:
                                     response_text += chunk
 
-                            # Send token back to the specific client waiting
-                            await response_queue.put(response.text)
+                            raw_chunk = response.text or ""
+                            if last_raw and raw_chunk.startswith(last_raw):
+                                delta = raw_chunk[len(last_raw):]
+                            else:
+                                delta = raw_chunk
+                            last_raw = raw_chunk
+
+                            clean_delta, in_think = self._strip_thinking_stream(delta, in_think)
+                            if clean_delta:
+                                clean_response_text += clean_delta
+                                await response_queue.put(clean_delta)
 
                         duration = time.time() - start_time
                         final_stats = monitor.get_snapshot()
@@ -250,7 +317,7 @@ class ModelEngine:
                         adapter_name=self.adapter_id or "base",
                         prompt=req.prompt,
                         system_prompt=getattr(req, "system_prompt", None),
-                        response_text=response_text,
+                        response_text=clean_response_text or self._strip_thinking(response_text),
                         tokens_in=prompt_tokens,
                         tokens_out=tokens_generated,
                         total_time_sec=duration,
@@ -298,8 +365,8 @@ class ModelEngine:
 
             messages.append({"role": "user", "content": request.prompt})
 
-            prompt_formatted = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+            prompt_formatted = self._apply_chat_template(
+                messages, disable_thinking=getattr(request, "_disable_thinking", False)
             )
 
             response_text = generate(
@@ -309,6 +376,8 @@ class ModelEngine:
                 max_tokens=request.max_tokens,
                 verbose=False
             )
+
+            response_text = self._strip_thinking(response_text)
             
             end_time = time.time()
 
