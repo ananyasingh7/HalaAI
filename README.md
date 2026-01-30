@@ -17,9 +17,9 @@ Build a private, always-on "LLM operating system" where one central engine power
 
 ## Model Setup
 
-- Base model: `mlx-community/Qwen2.5-14B-Instruct-4bit`.
+- Base model: `mlx-community/Qwen3-30B-A3B-4bit`.
 - Quantization: 4-bit to fit in local memory.
-- Adapters: LoRA personalities stored in `adapters/` and hot-swapped at runtime.
+- Adapters: Optional LoRA personalities stored in `adapters/` (not committed); must match the base model family.
 
 ## Architecture
 
@@ -134,10 +134,11 @@ To limit the history size while keeping context, send `history_window` (e.g., 12
 
 ## Adapters
 
-- Adapters live in `adapters/`.
+- Adapters live in `adapters/` (create the folder locally as needed).
 - Use `adapter_name="default"` to load a single adapter stored directly in `adapters/`.
 - Use `adapter_name="<folder>"` to load a named adapter in `adapters/<folder>/`.
 - Use `adapter_name="base"` or `adapter_name="none"` to unload to the base model.
+ - Qwen2.5 adapters are not compatible with Qwen3.
 
 Example:
 
@@ -151,7 +152,8 @@ curl -X POST http://localhost:8000/adapters/load \
 
 ### Performance
 
-- Avg ~29.8 tokens/sec with peaks around ~38 t/s for the 14B model.
+- Legacy baseline (Qwen2.5-14B): avg ~29.8 tokens/sec with peaks around ~38 t/s.
+- Qwen3-30B-A3B throughput varies by prompt; measure locally for your workloads.
 - Roughly 4x human reading speed (~5-8 tokens/sec).
 - Total time vs tokens-out is linear, indicating stable throughput as responses get longer.
 
@@ -234,16 +236,18 @@ Suggested breakpoints:
 - `app/` FastAPI server, engine, WebSocket handlers, logging, monitoring.
 - `ui/` Chainlit chat client.
 - `examples/` API, WebSocket, and LangChain integration samples.
-- `adapters/` LoRA adapter weights and config.
+- `adapters/` LoRA adapter weights and config (optional, not committed).
 - `evals/` evaluation scripts and reports.
 - `data/` vector DB, SQL helpers, data services, and datasets.
 - `performance/` performance logs and plots.
 
 ## Performance Notes
 
-Local tests on the Mac Studio M4 show:
+Local tests on the Mac Studio M4 (legacy 14B baseline) showed:
 - ~30 tokens/sec streaming throughput.
 - Adapter fine-tuning retained personal facts without degrading general reasoning in the "golden dataset" checks.
+
+Re-run `performance/stress_test.py` to characterize Qwen3-30B-A3B on your hardware.
 
 ## Deep Search + Browsing (Brave)
 
@@ -264,6 +268,8 @@ What happens next:
 
 - `core/search/browser.py` uses Trafilatura to extract clean page text.
 - JS-heavy pages that fail extraction are skipped.
+- Results without extracted content are dropped from the context block.
+- You can block problematic domains via `config/search_blocklist.json`.
 - Wikipedia results are prioritised when present.
 
 ### Prompting

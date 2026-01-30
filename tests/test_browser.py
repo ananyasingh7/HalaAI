@@ -36,6 +36,7 @@ class BrowserTests(unittest.TestCase):
         sys.modules["trafilatura"] = fake_trafilatura
 
         class FakeResponse:
+            status_code = 200
             text = "<html>fallback</html>"
 
         with patch("core.search.browser.requests.get", return_value=FakeResponse()):

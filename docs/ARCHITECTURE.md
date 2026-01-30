@@ -57,6 +57,7 @@ app/main.py  ->  FastAPI app instance
    - and current session history (Postgres).
 5) A short "search/expand-intent probe" pass is run to detect `[SEARCH: ...]` or `[EXPAND: ...]`.
 6) If search is requested, `core/search/brave_browse.py` performs Brave search + page scraping.
+   Blocklisted domains and pages without extracted content are skipped.
 7) If expand is requested, `data/sql/expander.py` fetches the full transcript and injects it as prior dialogue.
 8) Search/expansion blocks are formatted by `app/prompts.py` and injected into the system prompt.
 9) `engine.generate_stream(request)` enqueues a job in `app/queue.py`.
@@ -95,8 +96,9 @@ app/main.py  ->  FastAPI app instance
 
 ## Adapters (LoRA)
 
-- `app/engine.py` loads LoRA adapters from `adapters/`.
+- `app/engine.py` loads LoRA adapters from `adapters/` when present.
 - `/adapters/load` swaps adapters without reloading the base model.
+- Adapters must match the current base model family.
 
 ## UI Flow (Chainlit)
 
