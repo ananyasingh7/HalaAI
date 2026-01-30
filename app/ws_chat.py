@@ -144,6 +144,7 @@ async def websocket_chat(websocket: WebSocket):
                 base_system = _append_user_system_prompt(base_system, request.system_prompt)
 
                 probe_request = GenerateRequest(**request_data)
+                setattr(probe_request, "_disable_thinking", True)
                 search_enforcer = (
                     "\n\n### CRITICAL INSTRUCTION:\n"
                     "If the user asks about a specific Event, Game, Score, News, or recent Fact, "
