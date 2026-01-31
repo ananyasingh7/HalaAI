@@ -9,6 +9,7 @@ from app.config import settings
 from app.logging_setup import setup_logging
 from app.prompts import SUMMARY_SYSTEM_PROMPT
 from app.schemas import GenerateRequest
+from app.text_utils import strip_thinking
 from core import memory
 from data.sql import expander
 from data.sql.database import (
@@ -105,7 +106,14 @@ async def fetch_session_history(session_id: uuid.UUID) -> list[dict[str, Any]]:
     session = await asyncio.to_thread(get_session, session_id)
     if not session:
         return []
-    return list(session.history or [])
+    history = list(session.history or [])
+    cleaned = []
+    for msg in history:
+        if msg.get("role") == "assistant":
+            msg = dict(msg)
+            msg["content"] = strip_thinking(msg.get("content", ""))
+        cleaned.append(msg)
+    return cleaned
 
 
 async def expand_session_transcript(session_id_str: str) -> str:

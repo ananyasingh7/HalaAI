@@ -4,7 +4,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import AsyncGenerator
-import re
 
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -14,6 +13,7 @@ from app.logging_setup import setup_logging
 from app.monitor import monitor
 
 from app.queue import request_queue, QueueItem
+from app.text_utils import strip_thinking
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -75,12 +75,7 @@ class ModelEngine:
         )
 
     def _strip_thinking(self, text: str) -> str:
-        if not text:
-            return text
-        cleaned = re.sub(r"<think>.*?</think>\n*", "", text, flags=re.DOTALL | re.IGNORECASE)
-        # Guard against unterminated <think> blocks (e.g. truncated generations).
-        cleaned = re.sub(r"<think>.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-        return cleaned
+        return strip_thinking(text)
 
     def _strip_thinking_stream(self, text: str, in_think: bool) -> tuple[str, bool]:
         """
