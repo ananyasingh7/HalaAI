@@ -52,6 +52,11 @@ def _parse_summary_response(text: str) -> tuple[str, str]:
     title = str(payload.get("title") or "").strip()
     summary = str(payload.get("summary") or "").strip()
 
+    if summary and title and summary.lower() == title.lower():
+        summary = ""
+    if summary and summary.strip().lower() in {"conversation summary", "summary"}:
+        summary = ""
+
     if title or summary:
         return title or "Conversation Summary", summary
 

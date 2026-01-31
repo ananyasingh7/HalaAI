@@ -48,13 +48,21 @@ def format_search_results(browse_data: Dict[str, Any], max_chars_per_result: int
     into a clean 'Context Block' for the LLM.
     """
     if isinstance(browse_data, str):
-        return f"### SEARCH STATUS:\n{browse_data}\n"
+        return (
+            "### SEARCH STATUS:\n"
+            f"{browse_data}\n\n"
+            "INSTRUCTION: The search did not return usable sources. "
+            "Tell the user you could not access reliable results and ask whether to retry.\n"
+        )
 
     query = browse_data.get("query", "Unknown Query")
     results = browse_data.get("results", [])
 
     if not results:
-        return "### SEARCH RESULTS:\nNo relevant results found."
+        return (
+            "### SEARCH RESULTS:\nNo relevant results found.\n\n"
+            "INSTRUCTION: Say you could not find accessible sources and ask whether to retry.\n"
+        )
 
     formatted_text = f"### DEEP SEARCH RESULTS FOR: '{query}'\n\n"
 
@@ -75,7 +83,10 @@ def format_search_results(browse_data: Dict[str, Any], max_chars_per_result: int
         formatted_text += f"URL: {url}\n"
         formatted_text += f"CONTENT:\n{content_preview}\n\n"
 
-    formatted_text += "INSTRUCTION: Answer the user's question using the source content above."
+    formatted_text += (
+        "INSTRUCTION: Answer the user's question using ONLY the source content above. "
+        "If the answer is not contained, say you could not find it in the sources."
+    )
     return formatted_text
 
 

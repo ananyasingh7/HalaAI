@@ -56,6 +56,17 @@ def _contains_search_command(text: str | None) -> bool:
     return SEARCH_PATTERN.search(text) is not None
 
 
+def _is_empty_search_context(search_context: str | None) -> bool:
+    if not search_context:
+        return True
+    lowered = search_context.lower()
+    return (
+        "search status" in lowered
+        or "no relevant results" in lowered
+        or "no accessible results" in lowered
+    )
+
+
 def _append_user_system_prompt(base_prompt: str, user_prompt: str | None) -> str:
     if not user_prompt:
         return base_prompt
@@ -233,6 +244,16 @@ async def websocket_chat(websocket: WebSocket):
                     else:
                         logger.warning("Search failed: %s", browse_data)
                     search_context = format_search_results(browse_data)
+                    if _is_empty_search_context(search_context):
+                        fallback = (
+                            "I couldn't access reliable sources for that request. "
+                            "Want me to retry with a different query or allow additional sources?"
+                        )
+                        await websocket.send_json({"type": "token", "content": fallback})
+                        await websocket.send_json({"type": "end", "content": ""})
+                        if session_id:
+                            await append_session_message(session_id, "assistant", fallback)
+                        continue
 
                 final_system = build_system_prompt(
                     memories=memories,
