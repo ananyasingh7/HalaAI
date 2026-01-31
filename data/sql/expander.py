@@ -4,6 +4,7 @@ import uuid
 from sqlmodel import Session
 
 from app.logging_setup import setup_logging
+from app.text_utils import strip_thinking
 from data.sql.database import engine, ChatSession
 
 setup_logging()
@@ -26,6 +27,8 @@ def fetch_full_session(session_id_str: str) -> str:
             for msg in session.history:
                 role = msg.get("role", "unknown").upper()
                 content = msg.get("content", "")
+                if role == "ASSISTANT":
+                    content = strip_thinking(content)
                 transcript += f"{role}: {content}\n\n"
             
             return transcript + "--- END TRANSCRIPT ---"

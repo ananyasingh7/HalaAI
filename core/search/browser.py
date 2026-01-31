@@ -1,5 +1,7 @@
 import requests
 
+REQUEST_TIMEOUT_SEC = 8
+
 def visit_page(url: str, max_chars: int = 25000, include_header: bool = True) -> str:
     """
     Visits a web page and extracts the main text content (no ads/menus).
@@ -15,16 +17,12 @@ def visit_page(url: str, max_chars: int = 25000, include_header: bool = True) ->
             )
             return message
 
-        # Download HTML
-        downloaded = trafilatura.fetch_url(url)
-        
-        if not downloaded:
-            # fallback for some sites that block default user agents
-            headers = {'User-Agent': 'Mozilla/5.0 (compatible; HalaAI/1.0)'}
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code != 200:
-                return f"[Browser Error: HTTP {response.status_code}]"
-            downloaded = response.text
+        # Download HTML (use explicit timeout to avoid long hangs)
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; HalaAI/1.0)'}
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
+        if response.status_code != 200:
+            return f"[Browser Error: HTTP {response.status_code}]"
+        downloaded = response.text
 
         # extract Main Text
         # include_comments=False removes user comments

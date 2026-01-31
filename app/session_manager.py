@@ -9,6 +9,7 @@ from app.config import settings
 from app.logging_setup import setup_logging
 from app.prompts import SUMMARY_SYSTEM_PROMPT
 from app.schemas import GenerateRequest
+from app.text_utils import strip_thinking
 from core import memory
 from data.sql import expander
 from data.sql.database import (
@@ -51,6 +52,11 @@ def _parse_summary_response(text: str) -> tuple[str, str]:
     payload = _parse_json_payload(text) or {}
     title = str(payload.get("title") or "").strip()
     summary = str(payload.get("summary") or "").strip()
+
+    if summary and title and summary.lower() == title.lower():
+        summary = ""
+    if summary and summary.strip().lower() in {"conversation summary", "summary"}:
+        summary = ""
 
     if title or summary:
         return title or "Conversation Summary", summary
@@ -100,7 +106,14 @@ async def fetch_session_history(session_id: uuid.UUID) -> list[dict[str, Any]]:
     session = await asyncio.to_thread(get_session, session_id)
     if not session:
         return []
-    return list(session.history or [])
+    history = list(session.history or [])
+    cleaned = []
+    for msg in history:
+        if msg.get("role") == "assistant":
+            msg = dict(msg)
+            msg["content"] = strip_thinking(msg.get("content", ""))
+        cleaned.append(msg)
+    return cleaned
 
 
 async def expand_session_transcript(session_id_str: str) -> str:
@@ -131,6 +144,7 @@ async def summarise_session(
         max_tokens=256,
         priority=settings.priorities.background,
     )
+    setattr(request, "_disable_thinking", True)
 
     logger.info("Summarising session %s (%s messages).", session_id, len(history))
     chunks: list[str] = []
@@ -140,6 +154,26 @@ async def summarise_session(
     response_text = "".join(chunks)
 
     title, summary = _parse_summary_response(response_text)
+    if not summary:
+        retry_prompt = (
+            SUMMARY_SYSTEM_PROMPT.strip()
+            + "\nExample: {\"title\":\"Chat summary\",\"summary\":\"One or two sentences.\"}"
+        )
+        retry_request = GenerateRequest(
+            prompt=prompt,
+            system_prompt=retry_prompt,
+            max_tokens=256,
+            priority=settings.priorities.background,
+        )
+        setattr(retry_request, "_disable_thinking", True)
+        retry_result = await engine.generate_text(retry_request)
+        retry_text = retry_result.get("text", "")
+        title, summary = _parse_summary_response(retry_text)
+
+    if not summary:
+        trimmed = " ".join(transcript.split())
+        summary = trimmed[:400]
+        title = title or "Conversation Summary"
     await asyncio.to_thread(
         update_session_summary,
         session_id=session_id,

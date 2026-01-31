@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.logging_setup import setup_logging
+from app.text_utils import strip_thinking
 from data.sql.database import engine, ChatSession, delete_session
 
 setup_logging()
@@ -14,6 +15,12 @@ router = APIRouter(prefix="/data", tags=["data"])
 
 
 def _session_to_dict(session: ChatSession) -> dict:
+    history = []
+    for msg in session.history or []:
+        if msg.get("role") == "assistant":
+            msg = dict(msg)
+            msg["content"] = strip_thinking(msg.get("content", ""))
+        history.append(msg)
     return {
         "id": str(session.id),
         "title": session.title,
@@ -23,7 +30,7 @@ def _session_to_dict(session: ChatSession) -> dict:
         "is_active": session.is_active,
         "is_summarized": session.is_summarized,
         "summary": session.summary,
-        "history": session.history or [],
+        "history": history,
     }
 
 

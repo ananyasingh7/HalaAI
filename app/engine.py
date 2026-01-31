@@ -4,7 +4,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import AsyncGenerator
-import re
 
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -14,6 +13,7 @@ from app.logging_setup import setup_logging
 from app.monitor import monitor
 
 from app.queue import request_queue, QueueItem
+from app.text_utils import strip_thinking
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -75,9 +75,7 @@ class ModelEngine:
         )
 
     def _strip_thinking(self, text: str) -> str:
-        if not text:
-            return text
-        return re.sub(r"<think>.*?</think>\n*", "", text, flags=re.DOTALL)
+        return strip_thinking(text)
 
     def _strip_thinking_stream(self, text: str, in_think: bool) -> tuple[str, bool]:
         """
@@ -259,8 +257,7 @@ class ModelEngine:
                         peak_temp = 0.0
                         response_text = ""
                         clean_response_text = ""
-                        last_raw = ""
-                        in_think = False
+                        last_clean = ""
                         prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
 
                         for response in stream_generate(
@@ -285,14 +282,12 @@ class ModelEngine:
                                 else:
                                     response_text += chunk
 
-                            raw_chunk = response.text or ""
-                            if last_raw and raw_chunk.startswith(last_raw):
-                                delta = raw_chunk[len(last_raw):]
+                            stripped = self._strip_thinking(response_text)
+                            if stripped.startswith(last_clean):
+                                clean_delta = stripped[len(last_clean):]
                             else:
-                                delta = raw_chunk
-                            last_raw = raw_chunk
-
-                            clean_delta, in_think = self._strip_thinking_stream(delta, in_think)
+                                clean_delta = stripped
+                            last_clean = stripped
                             if clean_delta:
                                 clean_response_text += clean_delta
                                 await response_queue.put(clean_delta)

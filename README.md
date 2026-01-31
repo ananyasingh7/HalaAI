@@ -20,6 +20,7 @@ Build a private, always-on "LLM operating system" where one central engine power
 - Base model: `mlx-community/Qwen3-30B-A3B-4bit`.
 - Quantization: 4-bit to fit in local memory.
 - Adapters: Optional LoRA personalities stored in `adapters/` (not committed); must match the base model family.
+- Prompt policy is stored in Markdown under `prompts/` and assembled at runtime in `app/prompts.py`.
 
 ## Architecture
 
@@ -237,6 +238,7 @@ Suggested breakpoints:
 - `ui/` Chainlit chat client.
 - `examples/` API, WebSocket, and LangChain integration samples.
 - `adapters/` LoRA adapter weights and config (optional, not committed).
+- `prompts/` Markdown prompt policy (SYSTEM/AGENT/PROJECT/USER).
 - `evals/` evaluation scripts and reports.
 - `data/` vector DB, SQL helpers, data services, and datasets.
 - `performance/` performance logs and plots.
@@ -270,6 +272,7 @@ What happens next:
 - JS-heavy pages that fail extraction are skipped.
 - Results without extracted content are dropped from the context block.
 - You can block problematic domains via `config/search_blocklist.json`.
+- Domains that fail repeatedly are auto-blocklisted (tracked in `config/search_blocklist_failures.json`).
 - Wikipedia results are prioritised when present.
 
 ### Prompting

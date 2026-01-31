@@ -57,7 +57,7 @@ app/main.py  ->  FastAPI app instance
    - and current session history (Postgres).
 5) A short "search/expand-intent probe" pass is run to detect `[SEARCH: ...]` or `[EXPAND: ...]`.
 6) If search is requested, `core/search/brave_browse.py` performs Brave search + page scraping.
-   Blocklisted domains and pages without extracted content are skipped.
+   Blocklisted domains, repeated failures, and pages without extracted content are skipped.
 7) If expand is requested, `data/sql/expander.py` fetches the full transcript and injects it as prior dialogue.
 8) Search/expansion blocks are formatted by `app/prompts.py` and injected into the system prompt.
 9) `engine.generate_stream(request)` enqueues a job in `app/queue.py`.
@@ -82,7 +82,8 @@ app/main.py  ->  FastAPI app instance
 
 ## Prompt Assembly
 
-- `app/prompts.py` injects exact local date/time for temporal grounding.
+- `app/prompts.py` assembles the system prompt from Markdown files in `prompts/`,
+  then injects exact local date/time for temporal grounding.
 - User profile memories are labelled as verified system records to prioritise them over speculation.
 - Expanded transcripts are labelled explicitly as prior dialogue context.
 

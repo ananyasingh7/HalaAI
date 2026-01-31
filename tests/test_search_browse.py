@@ -29,6 +29,22 @@ class BraveBrowseTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(brave_browse, "BLOCKLIST_PATH", path):
                 items = brave_browse._load_blocklist()
         self.assertEqual(items, ["example.com", "test.com"])
+
+    def test_record_failure_auto_blocklists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocklist_path = Path(tmp) / "blocklist.json"
+            failure_path = Path(tmp) / "failures.json"
+            blocklist_path.write_text(json.dumps([]))
+            failure_path.write_text(json.dumps({"domains": {}}))
+
+            with patch.object(brave_browse, "BLOCKLIST_PATH", blocklist_path), patch.object(
+                brave_browse, "FAILURE_PATH", failure_path
+            ), patch.object(brave_browse, "FAILURE_THRESHOLD", 2):
+                brave_browse._record_failure("https://example.com/a")
+                brave_browse._record_failure("https://example.com/b")
+
+            blocklist = json.loads(blocklist_path.read_text())
+            self.assertIn("example.com", blocklist)
     def test_prioritize_wikipedia(self):
         results = [
             {"url": "https://example.com"},

@@ -9,6 +9,7 @@ from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.logging_setup import setup_logging
+from app.text_utils import strip_thinking
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.getenv(
@@ -74,6 +75,8 @@ def create_session(session_id: uuid.UUID | None = None, title: str = "New Conver
 
 def append_history(session_id: uuid.UUID, role: str, content: str) -> None:
     now = datetime.utcnow()
+    if role == "assistant":
+        content = strip_thinking(content)
     entry = {"role": role, "content": content, "timestamp": now.isoformat()}
 
     with Session(engine) as db:
