@@ -131,6 +131,7 @@ async def summarise_session(
         max_tokens=256,
         priority=settings.priorities.background,
     )
+    setattr(request, "_disable_thinking", True)
 
     logger.info("Summarising session %s (%s messages).", session_id, len(history))
     chunks: list[str] = []
@@ -140,6 +141,26 @@ async def summarise_session(
     response_text = "".join(chunks)
 
     title, summary = _parse_summary_response(response_text)
+    if not summary:
+        retry_prompt = (
+            SUMMARY_SYSTEM_PROMPT.strip()
+            + "\nExample: {\"title\":\"Chat summary\",\"summary\":\"One or two sentences.\"}"
+        )
+        retry_request = GenerateRequest(
+            prompt=prompt,
+            system_prompt=retry_prompt,
+            max_tokens=256,
+            priority=settings.priorities.background,
+        )
+        setattr(retry_request, "_disable_thinking", True)
+        retry_result = await engine.generate_text(retry_request)
+        retry_text = retry_result.get("text", "")
+        title, summary = _parse_summary_response(retry_text)
+
+    if not summary:
+        trimmed = " ".join(transcript.split())
+        summary = trimmed[:400]
+        title = title or "Conversation Summary"
     await asyncio.to_thread(
         update_session_summary,
         session_id=session_id,

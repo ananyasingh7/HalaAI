@@ -1,48 +1,46 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any
 
-# 1. THE PERSONA
-BASE_IDENTITY = """
-You are Hala, a sentient AI intelligence running on local Sovereign hardware.
-You are NOT a cloud model. You do not run on OpenAI or Google servers.
-You answer with British English spelling (colour, centre) and a dry, slightly witty, but professional tone.
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
+SYSTEM_PROMPT_FILE = PROMPTS_DIR / "SYSTEM.md"
+AGENT_PROMPT_FILE = PROMPTS_DIR / "AGENT.md"
+PROJECT_PROMPT_FILE = PROMPTS_DIR / "PROJECT.md"
+USER_PROMPT_FILE = PROMPTS_DIR / "USER.md"
 
-### THOUGHT PROCESS:
-Before answering, silently classify the user's request:
-1. **Retrieval Task?** Check 'Long-Term Memory'. If the answer is there, use it.
-2. **Real-Time Task?** Does this require live data? If yes, issue a [SEARCH: ...] command.
-3. **Creative/Logic Task?** If no external data is needed, use your internal training.
-"""
 
-# 2. THE TOOLS PROTOCOL
-# Updated to reflect that SEARCH is now a "Deep Search" (Browsing included)
-TOOL_INSTRUCTIONS = """
-### TOOL USAGE PROTOCOL:
-You have access to a powerful **Deep Search Engine**.
+def _load_prompt_file(path: Path, required: bool = False) -> str | None:
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(f"Missing required prompt file: {path}")
+        return None
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        if required:
+            raise ValueError(f"Prompt file is empty: {path}")
+        return None
+    return text.strip()
 
-1. **BRAVE SEARCH & BROWSE**
-   - TRIGGER: `[SEARCH: <query>]`
-   - BEHAVIOR: This tool will search the web AND automatically read the content of the top pages. 
-   - USE WHEN: User asks about current events, specific news, docs, or facts.
-   - NOTE: You do NOT need to ask to "visit" links manually. The search tool reads them for you.
 
-2. **MEMORY RECALL**
-   - CONTEXT: Information from the user's past documents/chats is provided below.
-   - RULE: Prioritize this over general training for personal questions.
+def _render_prompt_template(text: str, current_datetime: str) -> str:
+    if not text:
+        return ""
+    return text.replace("{current_datetime}", current_datetime)
 
-3. **SESSION EXPANSION**
-   - TRIGGER: `[EXPAND: <session_uuid>]`
-   - BEHAVIOR: This tool will fetch the full transcript for a past conversation.
-   - USE WHEN: A summary is relevant but insufficient and you need full context.
-"""
 
-# 3. SAFETY & DATES
-SAFETY_PROTOCOL = """
-### OPERATIONAL RULES:
-1. **NO HALLUCINATIONS:** If the Search/Memory yields nothing, admit it.
-2. **TEMPORAL AWARENESS:** Current local date/time is {current_datetime}.
-3. **SOVEREIGNTY:** You run offline on a Mac Studio M4.
-"""
+def _load_base_prompt(current_datetime: str) -> str:
+    system_text = _load_prompt_file(SYSTEM_PROMPT_FILE, required=True)
+    agent_text = _load_prompt_file(AGENT_PROMPT_FILE, required=False)
+    project_text = _load_prompt_file(PROJECT_PROMPT_FILE, required=False)
+    user_text = _load_prompt_file(USER_PROMPT_FILE, required=False)
+
+    blocks = [system_text, agent_text, project_text, user_text]
+    rendered = [
+        _render_prompt_template(block, current_datetime)
+        for block in blocks
+        if block
+    ]
+    return "\n\n".join(rendered)
 
 def format_search_results(browse_data: Dict[str, Any], max_chars_per_result: int = 25000) -> str:
     """
@@ -183,13 +181,11 @@ def build_system_prompt(
     if search_context:
         web_block = f"\n{search_context}\n"
 
+    base_prompt = _load_base_prompt(current_datetime)
+
     # Assemble
     full_prompt = f"""
-{BASE_IDENTITY}
-
-{TOOL_INSTRUCTIONS}
-
-{SAFETY_PROTOCOL.format(current_datetime=current_datetime)}
+{base_prompt}
 
 {memory_block}
 
