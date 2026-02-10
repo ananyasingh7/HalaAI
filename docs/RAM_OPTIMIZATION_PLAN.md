@@ -53,3 +53,29 @@ We will proceed with implementing **Points 1, 2, 3, and 4** as they provide the 
 
 ### Phase 3: Monitoring
 * Add a memory telemetry endpoint to track usage trends over time.
+
+## Implemented Configuration (Now Available)
+
+You can tune the memory controls through `settings.yaml`:
+
+```yaml
+engine_memory:
+  max_kv_size: 2048
+  max_prompt_tokens: 1024
+  prompt_token_reserve: 128
+  preserve_prompt_head_tokens: 256
+  kv_bits: null
+  kv_group_size: 64
+  quantized_kv_start: 0
+  force_gc_after_request: true
+  enable_metal_wired_limit: true
+  metal_wired_limit_gb: null
+  metal_wired_limit_ratio: 0.67
+
+chroma_memory:
+  segment_cache_policy: LRU
+  memory_limit_bytes: 536870912
+```
+
+Memory telemetry endpoint:
+* `GET /metrics/memory`

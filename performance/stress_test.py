@@ -1,17 +1,21 @@
 import argparse
 import asyncio
+import csv
+from datetime import datetime, timezone
 import json
 import sqlite3
 import statistics
 import time
 from pathlib import Path
 
+import aiohttp
 import websockets
 
 
 DEFAULT_URL = "ws://localhost:8000/ws/chat/v2"
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DB = str(BASE_DIR / "inference_logs.db")
+DEFAULT_RESULTS_DIR = str(BASE_DIR / "performance" / "results")
 
 
 def _connect_db(path: str) -> sqlite3.Connection:
@@ -84,6 +88,71 @@ def _build_prompt(args: argparse.Namespace, words: int) -> str:
     return ((args.prompt_token + " ") * words).strip()
 
 
+def _default_metrics_url(ws_url: str) -> str:
+    if ws_url.startswith("wss://"):
+        return ws_url.replace("wss://", "https://", 1).split("/ws/", 1)[0] + "/metrics/memory"
+    if ws_url.startswith("ws://"):
+        return ws_url.replace("ws://", "http://", 1).split("/ws/", 1)[0] + "/metrics/memory"
+    return "http://localhost:8000/metrics/memory"
+
+
+async def _fetch_metrics(session: aiohttp.ClientSession, metrics_url: str, timeout: float) -> dict | None:
+    try:
+        async with session.get(metrics_url, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            payload = await response.json()
+            return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _estimated_generation_cap(log_row: sqlite3.Row, metrics_payload: dict | None) -> int | None:
+    if not metrics_payload:
+        return None
+    engine_memory = metrics_payload.get("engine_memory") or {}
+    max_kv_size = engine_memory.get("max_kv_size")
+    reserve = engine_memory.get("prompt_token_reserve", 0)
+    if not isinstance(max_kv_size, int) or max_kv_size <= 0:
+        return None
+    try:
+        tokens_in = int(log_row["tokens_in"])
+    except Exception:
+        return None
+    return max(1, max_kv_size - tokens_in - int(reserve))
+
+
+def _ensure_results_dir(path: str) -> Path:
+    result_dir = Path(path)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    return result_dir
+
+
+def _build_run_tag(args: argparse.Namespace) -> str:
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    label = args.run_label.strip().replace(" ", "_") if args.run_label else None
+    if label:
+        return f"{timestamp}_{label}"
+    return timestamp
+
+
+def _write_results(run_path_prefix: Path, rows: list[dict]) -> tuple[Path, Path]:
+    json_path = run_path_prefix.with_suffix(".json")
+    csv_path = run_path_prefix.with_suffix(".csv")
+
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(rows, handle, indent=2)
+
+    fieldnames = sorted({key for row in rows for key in row.keys()}) if rows else []
+    with open(csv_path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if fieldnames:
+            writer.writeheader()
+            writer.writerows(rows)
+
+    return json_path, csv_path
+
+
 async def _ws_request(
     url: str,
     prompt: str,
@@ -118,139 +187,250 @@ async def _ws_request(
                 raise RuntimeError(msg.get("detail", "Server error"))
 
 
-async def _context_sweep(args: argparse.Namespace) -> None:
+async def _context_sweep(
+    args: argparse.Namespace,
+    http_session: aiohttp.ClientSession | None,
+    results: list[dict],
+) -> None:
     conn = _connect_db(args.db)
-    _ensure_table(conn, args.db)
-    last_id = _get_last_id(conn)
+    try:
+        _ensure_table(conn, args.db)
+        last_id = _get_last_id(conn)
 
-    n = args.context_start
-    while n <= args.context_max:
-        prompt = (args.prompt_token + " ") * n
-        prompt = prompt.strip()
-        print(f"context_sweep: words={n} max_tokens=1")
-        try:
-            await _ws_request(
-                args.url,
-                prompt,
-                max_tokens=1,
-                priority=args.priority,
-                system_prompt=args.system_prompt,
-                timeout=args.timeout,
-                ping_interval=args.ping_interval,
-                ping_timeout=args.ping_timeout,
+        n = args.context_start
+        while n <= args.context_max:
+            prompt = (args.prompt_token + " ") * n
+            prompt = prompt.strip()
+            print(f"context_sweep: words={n} max_tokens=1")
+            before_metrics = None
+            if args.enable_metrics and http_session:
+                before_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+
+            try:
+                await _ws_request(
+                    args.url,
+                    prompt,
+                    max_tokens=1,
+                    priority=args.priority,
+                    system_prompt=args.system_prompt,
+                    timeout=args.timeout,
+                    ping_interval=args.ping_interval,
+                    ping_timeout=args.ping_timeout,
+                )
+            except Exception as exc:
+                print(f"  failed at words={n}: {exc}")
+                break
+
+            row = _wait_for_new_row(conn, last_id, args.log_timeout)
+            last_id = row["id"]
+            after_metrics = None
+            if args.enable_metrics and http_session:
+                after_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+            cap_est = _estimated_generation_cap(row, after_metrics or before_metrics)
+            run_row = {
+                "mode": "context",
+                "input_words": n,
+                "requested_max_tokens": 1,
+                "db_id": int(row["id"]),
+                "tokens_in": int(row["tokens_in"]),
+                "tokens_out": int(row["tokens_out"]),
+                "total_time_sec": float(row["total_time_sec"]),
+                "tokens_per_sec": float(row["tokens_per_sec"]),
+                "estimated_token_cap": cap_est,
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+            }
+            if after_metrics:
+                hw = after_metrics.get("hardware", {})
+                run_row["system_ram_gb"] = hw.get("system_ram_gb")
+                run_row["process_ram_gb"] = hw.get("process_ram_gb")
+                run_row["queue_depth"] = (after_metrics.get("queue") or {}).get("depth")
+            results.append(run_row)
+            print(
+                "  tokens_in={tokens_in} tokens_out={tokens_out} tps={tps:.2f} time={time_s:.2f}s cap_est={cap}".format(
+                    tokens_in=row["tokens_in"],
+                    tokens_out=row["tokens_out"],
+                    tps=row["tokens_per_sec"],
+                    time_s=row["total_time_sec"],
+                    cap=cap_est,
+                )
             )
-        except Exception as exc:
-            print(f"  failed at words={n}: {exc}")
-            break
-
-        row = _wait_for_new_row(conn, last_id, args.log_timeout)
-        last_id = row["id"]
-        print(
-            "  tokens_in={tokens_in} tokens_out={tokens_out} tps={tps:.2f} time={time_s:.2f}s".format(
-                tokens_in=row["tokens_in"],
-                tokens_out=row["tokens_out"],
-                tps=row["tokens_per_sec"],
-                time_s=row["total_time_sec"],
-            )
-        )
-        n *= args.context_step
+            n *= args.context_step
+    finally:
+        conn.close()
 
 
-async def _output_sweep(args: argparse.Namespace) -> None:
+async def _output_sweep(
+    args: argparse.Namespace,
+    http_session: aiohttp.ClientSession | None,
+    results: list[dict],
+) -> None:
     conn = _connect_db(args.db)
-    _ensure_table(conn, args.db)
-    last_id = _get_last_id(conn)
+    try:
+        _ensure_table(conn, args.db)
+        last_id = _get_last_id(conn)
 
-    n = args.output_start
-    prompt = _build_prompt(args, args.prompt_words)
+        n = args.output_start
+        prompt = _build_prompt(args, args.prompt_words)
 
-    while n <= args.output_max:
+        while n <= args.output_max:
+            if args.prompt:
+                print(f"output_sweep: max_tokens={n} prompt=custom")
+            elif args.prompt_preset:
+                print(f"output_sweep: max_tokens={n} prompt_preset={args.prompt_preset}")
+            else:
+                print(f"output_sweep: max_tokens={n} prompt_words={args.prompt_words}")
+            before_metrics = None
+            if args.enable_metrics and http_session:
+                before_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+
+            try:
+                await _ws_request(
+                    args.url,
+                    prompt,
+                    max_tokens=n,
+                    priority=args.priority,
+                    system_prompt=args.system_prompt,
+                    timeout=args.timeout,
+                    ping_interval=args.ping_interval,
+                    ping_timeout=args.ping_timeout,
+                )
+            except Exception as exc:
+                print(f"  failed at max_tokens={n}: {exc}")
+                break
+
+            row = _wait_for_new_row(conn, last_id, args.log_timeout)
+            last_id = row["id"]
+            after_metrics = None
+            if args.enable_metrics and http_session:
+                after_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+            cap_est = _estimated_generation_cap(row, after_metrics or before_metrics)
+            run_row = {
+                "mode": "output",
+                "requested_max_tokens": n,
+                "db_id": int(row["id"]),
+                "tokens_in": int(row["tokens_in"]),
+                "tokens_out": int(row["tokens_out"]),
+                "total_time_sec": float(row["total_time_sec"]),
+                "tokens_per_sec": float(row["tokens_per_sec"]),
+                "estimated_token_cap": cap_est,
+                "hit_estimated_cap": bool(cap_est is not None and int(row["tokens_out"]) >= cap_est),
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+            }
+            if after_metrics:
+                hw = after_metrics.get("hardware", {})
+                run_row["system_ram_gb"] = hw.get("system_ram_gb")
+                run_row["process_ram_gb"] = hw.get("process_ram_gb")
+                run_row["queue_depth"] = (after_metrics.get("queue") or {}).get("depth")
+            results.append(run_row)
+            print(
+                "  tokens_in={tokens_in} tokens_out={tokens_out} tps={tps:.2f} time={time_s:.2f}s cap_est={cap}".format(
+                    tokens_in=row["tokens_in"],
+                    tokens_out=row["tokens_out"],
+                    tps=row["tokens_per_sec"],
+                    time_s=row["total_time_sec"],
+                    cap=cap_est,
+                )
+            )
+            n *= args.output_step
+    finally:
+        conn.close()
+
+
+async def _concurrency_test(
+    args: argparse.Namespace,
+    http_session: aiohttp.ClientSession | None,
+    results: list[dict],
+) -> None:
+    conn = _connect_db(args.db)
+    try:
+        _ensure_table(conn, args.db)
+        last_id = _get_last_id(conn)
+
+        prompt = _build_prompt(args, args.prompt_words)
+
         if args.prompt:
-            print(f"output_sweep: max_tokens={n} prompt=custom")
+            print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens} prompt=custom")
         elif args.prompt_preset:
-            print(f"output_sweep: max_tokens={n} prompt_preset={args.prompt_preset}")
+            print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens} prompt_preset={args.prompt_preset}")
         else:
-            print(f"output_sweep: max_tokens={n} prompt_words={args.prompt_words}")
-        try:
-            await _ws_request(
-                args.url,
-                prompt,
-                max_tokens=n,
-                priority=args.priority,
-                system_prompt=args.system_prompt,
-                timeout=args.timeout,
-                ping_interval=args.ping_interval,
-                ping_timeout=args.ping_timeout,
-            )
-        except Exception as exc:
-            print(f"  failed at max_tokens={n}: {exc}")
-            break
+            print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens}")
+        before_metrics = None
+        if args.enable_metrics and http_session:
+            before_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
 
-        row = _wait_for_new_row(conn, last_id, args.log_timeout)
-        last_id = row["id"]
+        start = time.time()
+        await asyncio.gather(
+            *[
+                _ws_request(
+                    args.url,
+                    prompt,
+                    max_tokens=args.concurrency_tokens,
+                    priority=args.priority,
+                    system_prompt=args.system_prompt,
+                    timeout=args.timeout,
+                    ping_interval=args.ping_interval,
+                    ping_timeout=args.ping_timeout,
+                )
+                for _ in range(args.clients)
+            ]
+        )
+        wall_time = time.time() - start
+
+        rows = _wait_for_rows(conn, last_id, args.clients, args.log_timeout)
+        after_metrics = None
+        if args.enable_metrics and http_session:
+            after_metrics = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+
+        tokens_out = [row["tokens_out"] for row in rows]
+        tps = [row["tokens_per_sec"] for row in rows]
+        total_out = sum(tokens_out)
+        avg_tps = statistics.mean(tps) if tps else 0.0
         print(
-            "  tokens_in={tokens_in} tokens_out={tokens_out} tps={tps:.2f} time={time_s:.2f}s".format(
-                tokens_in=row["tokens_in"],
-                tokens_out=row["tokens_out"],
-                tps=row["tokens_per_sec"],
-                time_s=row["total_time_sec"],
+            "  completed={count} total_tokens_out={total} wall_time={wall:.2f}s avg_tps={avg:.2f} max_tps={mx:.2f} min_tps={mn:.2f}".format(
+                count=len(rows),
+                total=total_out,
+                wall=wall_time,
+                avg=avg_tps,
+                mx=max(tps) if tps else 0.0,
+                mn=min(tps) if tps else 0.0,
             )
         )
-        n *= args.output_step
 
-
-async def _concurrency_test(args: argparse.Namespace) -> None:
-    conn = _connect_db(args.db)
-    _ensure_table(conn, args.db)
-    last_id = _get_last_id(conn)
-
-    prompt = _build_prompt(args, args.prompt_words)
-
-    if args.prompt:
-        print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens} prompt=custom")
-    elif args.prompt_preset:
-        print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens} prompt_preset={args.prompt_preset}")
-    else:
-        print(f"concurrency_test: clients={args.clients} max_tokens={args.concurrency_tokens}")
-    start = time.time()
-    await asyncio.gather(
-        *[
-            _ws_request(
-                args.url,
-                prompt,
-                max_tokens=args.concurrency_tokens,
-                priority=args.priority,
-                system_prompt=args.system_prompt,
-                timeout=args.timeout,
-                ping_interval=args.ping_interval,
-                ping_timeout=args.ping_timeout,
-            )
-            for _ in range(args.clients)
-        ]
-    )
-    wall_time = time.time() - start
-
-    rows = _wait_for_rows(conn, last_id, args.clients, args.log_timeout)
-    tokens_out = [row["tokens_out"] for row in rows]
-    tps = [row["tokens_per_sec"] for row in rows]
-    total_out = sum(tokens_out)
-    avg_tps = statistics.mean(tps) if tps else 0.0
-    print(
-        "  completed={count} total_tokens_out={total} wall_time={wall:.2f}s avg_tps={avg:.2f} max_tps={mx:.2f} min_tps={mn:.2f}".format(
-            count=len(rows),
-            total=total_out,
-            wall=wall_time,
-            avg=avg_tps,
-            mx=max(tps) if tps else 0.0,
-            mn=min(tps) if tps else 0.0,
-        )
-    )
+        for row in rows:
+            cap_est = _estimated_generation_cap(row, after_metrics or before_metrics)
+            run_row = {
+                "mode": "concurrency",
+                "requested_max_tokens": args.concurrency_tokens,
+                "clients": args.clients,
+                "db_id": int(row["id"]),
+                "tokens_in": int(row["tokens_in"]),
+                "tokens_out": int(row["tokens_out"]),
+                "total_time_sec": float(row["total_time_sec"]),
+                "tokens_per_sec": float(row["tokens_per_sec"]),
+                "estimated_token_cap": cap_est,
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+                "wall_time_sec": wall_time,
+                "aggregate_total_tokens_out": total_out,
+                "aggregate_avg_tps": avg_tps,
+            }
+            if after_metrics:
+                hw = after_metrics.get("hardware", {})
+                run_row["system_ram_gb"] = hw.get("system_ram_gb")
+                run_row["process_ram_gb"] = hw.get("process_ram_gb")
+                run_row["queue_depth"] = (after_metrics.get("queue") or {}).get("depth")
+            results.append(run_row)
+    finally:
+        conn.close()
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stress test HalaAI over WebSocket and read stats from SQLite logs.")
     parser.add_argument("--url", default=DEFAULT_URL, help="WebSocket URL")
     parser.add_argument("--db", default=DEFAULT_DB, help="Path to inference_logs.db")
+    parser.add_argument("--metrics-url", default=None, help="HTTP metrics endpoint (defaults from --url)")
+    parser.add_argument("--disable-metrics", action="store_true", help="Disable /metrics/memory polling")
+    parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, help="Directory for run artifacts")
+    parser.add_argument("--run-label", default=None, help="Optional run label for output filenames")
     parser.add_argument("--system-prompt", default=None, help="Optional system prompt")
     parser.add_argument("--priority", type=int, default=10, help="Queue priority (lower = higher priority)")
     parser.add_argument("--timeout", type=float, default=300.0, help="Per-request timeout in seconds")
@@ -294,14 +474,57 @@ def main() -> None:
     if args.no_ping:
         args.ping_interval = None
         args.ping_timeout = None
+    args.enable_metrics = not args.disable_metrics
+    if not args.metrics_url:
+        args.metrics_url = _default_metrics_url(args.url)
 
     async def runner() -> None:
-        if args.mode in {"context", "all"}:
-            await _context_sweep(args)
-        if args.mode in {"output", "all"}:
-            await _output_sweep(args)
-        if args.mode in {"concurrency", "all"}:
-            await _concurrency_test(args)
+        run_results: list[dict] = []
+        run_tag = _build_run_tag(args)
+        result_dir = _ensure_results_dir(args.results_dir)
+        run_prefix = result_dir / f"stress_{run_tag}"
+
+        print(f"run_tag={run_tag}")
+        if args.enable_metrics:
+            print(f"metrics_url={args.metrics_url}")
+            async with aiohttp.ClientSession() as http_session:
+                snapshot = await _fetch_metrics(http_session, args.metrics_url, timeout=5.0)
+                if snapshot:
+                    engine_memory = snapshot.get("engine_memory", {})
+                    chroma_memory = snapshot.get("chroma_memory", {})
+                    print(
+                        "engine_memory: max_kv_size={max_kv} max_prompt_tokens={max_prompt} reserve={reserve}".format(
+                            max_kv=engine_memory.get("max_kv_size"),
+                            max_prompt=engine_memory.get("max_prompt_tokens"),
+                            reserve=engine_memory.get("prompt_token_reserve"),
+                        )
+                    )
+                    print(
+                        "chroma_memory: policy={policy} limit_bytes={limit}".format(
+                            policy=chroma_memory.get("segment_cache_policy"),
+                            limit=chroma_memory.get("memory_limit_bytes"),
+                        )
+                    )
+                else:
+                    print("warning: metrics endpoint unavailable; continuing without memory snapshots")
+
+                if args.mode in {"context", "all"}:
+                    await _context_sweep(args, http_session, run_results)
+                if args.mode in {"output", "all"}:
+                    await _output_sweep(args, http_session, run_results)
+                if args.mode in {"concurrency", "all"}:
+                    await _concurrency_test(args, http_session, run_results)
+        else:
+            if args.mode in {"context", "all"}:
+                await _context_sweep(args, None, run_results)
+            if args.mode in {"output", "all"}:
+                await _output_sweep(args, None, run_results)
+            if args.mode in {"concurrency", "all"}:
+                await _concurrency_test(args, None, run_results)
+
+        json_path, csv_path = _write_results(run_prefix, run_results)
+        print(f"saved_results_json={json_path}")
+        print(f"saved_results_csv={csv_path}")
 
     asyncio.run(runner())
 

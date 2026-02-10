@@ -6,7 +6,9 @@ from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 
+from app.config import settings
 from app.logging_setup import setup_logging
+
 
 class Memory:
     _instance = None
@@ -26,11 +28,51 @@ class Memory:
         self.logger.info("Initializing Memory Cortex...")
         db_path = Path(__file__).resolve().parents[1] / "data" / "vector_db"
         db_path.mkdir(parents=True, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=str(db_path))
+        self.client = self._create_persistent_client(str(db_path))
         self.collection = self.client.get_or_create_collection(name="hala_ai_knowledge")
-        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
         self._initialized = True
         self.logger.info("Memory Online")
+
+    def _build_chroma_settings(self):
+        cfg = settings.chroma_memory
+        memory_limit = int(cfg.memory_limit_bytes or 0)
+        if memory_limit <= 0:
+            return None
+
+        try:
+            from chromadb.config import Settings as ChromaSettings
+        except Exception:
+            self.logger.warning("Could not import chromadb.config.Settings; skipping memory cap settings.")
+            return None
+
+        policy = (cfg.segment_cache_policy or "").strip().upper()
+        if policy and policy != "LRU":
+            self.logger.warning("Unsupported Chroma cache policy '%s'; forcing LRU.", policy)
+        policy = "LRU"
+
+        self.logger.info(
+            "Applying Chroma memory cap: policy=%s, limit=%.1fMB",
+            policy,
+            memory_limit / (1024 * 1024),
+        )
+        return ChromaSettings(
+            chroma_segment_cache_policy=policy,
+            chroma_memory_limit_bytes=memory_limit,
+        )
+
+    def _create_persistent_client(self, db_path: str):
+        chroma_settings = self._build_chroma_settings()
+        if chroma_settings is None:
+            return chromadb.PersistentClient(path=db_path)
+
+        try:
+            return chromadb.PersistentClient(path=db_path, settings=chroma_settings)
+        except TypeError:
+            self.logger.warning(
+                "PersistentClient(settings=...) unsupported in this Chroma runtime; falling back to defaults."
+            )
+            return chromadb.PersistentClient(path=db_path)
 
     def memorize(self, text: str, source: str = "user_chat", metadata: dict = None, doc_id: str | None = None) -> str:
         """

@@ -1,5 +1,7 @@
 import asyncio
+import gc
 import logging
+import platform
 import time
 import uuid
 from pathlib import Path
@@ -8,6 +10,7 @@ from typing import AsyncGenerator
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
+from app.config import settings
 from app.database import InferenceLog, init_db, log_stats
 from app.logging_setup import setup_logging
 from app.monitor import monitor
@@ -20,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 BASE_MODEL_ID = "mlx-community/Qwen3-30B-A3B-4bit"
 ADAPTERS_DIR = Path("adapters")
+BYTES_PER_GB = 1024**3
 
 class ModelEngine:
     """Singleton GPU engine that manages adapters, queues, and inference."""
@@ -51,6 +55,8 @@ class ModelEngine:
         self.running = False
         self._monitor_interval = 5
 
+        self._configure_metal_wired_limit()
+
         # load the base model
         self.model, self.tokenizer = load(self.model_id)
         self._initialized = True
@@ -76,6 +82,129 @@ class ModelEngine:
 
     def _strip_thinking(self, text: str) -> str:
         return strip_thinking(text)
+
+    def _configure_metal_wired_limit(self) -> None:
+        cfg = settings.engine_memory
+        if not cfg.enable_metal_wired_limit:
+            return
+
+        try:
+            import mlx.core as mx
+        except Exception:
+            logger.exception("Failed to import mlx.core; skipping wired memory limit setup.")
+            return
+
+        try:
+            if not hasattr(mx, "metal") or not mx.metal.is_available():
+                logger.info("Metal not available; skipping wired memory limit setup.")
+                return
+
+            info = mx.metal.device_info()
+            recommended_limit = int(info.get("max_recommended_working_set_size", 0))
+            if recommended_limit <= 0:
+                logger.info("Could not resolve recommended Metal working set size; skipping wired limit.")
+                return
+
+            if cfg.metal_wired_limit_gb is not None and cfg.metal_wired_limit_gb > 0:
+                target_limit = int(cfg.metal_wired_limit_gb * BYTES_PER_GB)
+            else:
+                ratio = max(0.1, min(cfg.metal_wired_limit_ratio, 1.0))
+                target_limit = int(recommended_limit * ratio)
+
+            safe_limit = max(1, min(target_limit, recommended_limit))
+            previous_limit = mx.set_wired_limit(safe_limit)
+            logger.info(
+                "Configured MLX wired limit to %.2fGB (previous %.2fGB, recommended %.2fGB, platform=%s).",
+                safe_limit / BYTES_PER_GB,
+                previous_limit / BYTES_PER_GB,
+                recommended_limit / BYTES_PER_GB,
+                platform.mac_ver()[0] or "unknown",
+            )
+        except Exception:
+            logger.exception("Failed to configure MLX wired memory limit.")
+
+    def _kv_generation_kwargs(self) -> dict:
+        cfg = settings.engine_memory
+        kwargs = {}
+        if cfg.max_kv_size and cfg.max_kv_size > 0:
+            kwargs["max_kv_size"] = int(cfg.max_kv_size)
+        if cfg.kv_bits is not None:
+            kwargs["kv_bits"] = int(cfg.kv_bits)
+            kwargs["kv_group_size"] = int(cfg.kv_group_size)
+            kwargs["quantized_kv_start"] = int(cfg.quantized_kv_start)
+        return kwargs
+
+    def _max_prompt_tokens_for_request(self, requested_max_tokens: int) -> int | None:
+        cfg = settings.engine_memory
+        caps: list[int] = []
+        if cfg.max_prompt_tokens and cfg.max_prompt_tokens > 0:
+            caps.append(int(cfg.max_prompt_tokens))
+        if cfg.max_kv_size and cfg.max_kv_size > 0:
+            kv_cap = int(cfg.max_kv_size) - int(requested_max_tokens) - int(cfg.prompt_token_reserve)
+            if kv_cap > 0:
+                caps.append(kv_cap)
+        return min(caps) if caps else None
+
+    def _truncate_prompt_tokens(self, prompt_tokens: list[int], limit: int) -> tuple[list[int], bool]:
+        if limit <= 0 or len(prompt_tokens) <= limit:
+            return prompt_tokens, False
+
+        keep_head = min(settings.engine_memory.preserve_prompt_head_tokens, max(limit - 1, 0))
+        if keep_head <= 0:
+            return prompt_tokens[-limit:], True
+
+        keep_tail = limit - keep_head
+        if keep_tail <= 0:
+            return prompt_tokens[:limit], True
+
+        return prompt_tokens[:keep_head] + prompt_tokens[-keep_tail:], True
+
+    def _prepare_prompt_and_limits(self, request, prompt_formatted: str) -> dict:
+        requested_max_tokens = max(1, int(getattr(request, "max_tokens", 256)))
+        encoded_prompt = self.tokenizer.encode(prompt_formatted)
+        original_prompt_tokens = len(encoded_prompt)
+
+        prompt_limit = self._max_prompt_tokens_for_request(requested_max_tokens)
+        truncated = False
+        if prompt_limit is not None and original_prompt_tokens > prompt_limit:
+            encoded_prompt, truncated = self._truncate_prompt_tokens(encoded_prompt, prompt_limit)
+            logger.warning(
+                "Prompt trimmed from %s to %s tokens to stay within memory limits.",
+                original_prompt_tokens,
+                len(encoded_prompt),
+            )
+
+        final_max_tokens = requested_max_tokens
+        cfg = settings.engine_memory
+        if cfg.max_kv_size and cfg.max_kv_size > 0:
+            kv_available_for_generation = int(cfg.max_kv_size) - len(encoded_prompt) - int(cfg.prompt_token_reserve)
+            if kv_available_for_generation < 1:
+                hard_prompt_limit = max(1, int(cfg.max_kv_size) - int(cfg.prompt_token_reserve) - 1)
+                encoded_prompt, _ = self._truncate_prompt_tokens(encoded_prompt, hard_prompt_limit)
+                kv_available_for_generation = max(
+                    1,
+                    int(cfg.max_kv_size) - len(encoded_prompt) - int(cfg.prompt_token_reserve),
+                )
+
+            if final_max_tokens > kv_available_for_generation:
+                logger.info(
+                    "Capping max_tokens from %s to %s to respect max_kv_size=%s.",
+                    final_max_tokens,
+                    kv_available_for_generation,
+                    cfg.max_kv_size,
+                )
+                final_max_tokens = kv_available_for_generation
+
+        return {
+            "prompt": encoded_prompt,
+            "prompt_tokens": len(encoded_prompt),
+            "max_tokens": final_max_tokens,
+            "prompt_was_trimmed": truncated,
+        }
+
+    def _post_request_cleanup(self) -> None:
+        if settings.engine_memory.force_gc_after_request:
+            gc.collect()
 
     def _strip_thinking_stream(self, text: str, in_think: bool) -> tuple[str, bool]:
         """
@@ -242,6 +371,7 @@ class ModelEngine:
                     prompt_formatted = self._apply_chat_template(
                         messages, disable_thinking=getattr(req, "_disable_thinking", False)
                     )
+                    generation_inputs = self._prepare_prompt_and_limits(req, prompt_formatted)
 
                     sampler = make_sampler(
                         temp=getattr(req, "temp", 0.7),
@@ -258,14 +388,15 @@ class ModelEngine:
                         response_text = ""
                         clean_response_text = ""
                         last_clean = ""
-                        prompt_tokens = len(self.tokenizer.encode(prompt_formatted))
+                        prompt_tokens = generation_inputs["prompt_tokens"]
 
                         for response in stream_generate(
                             self.model,
                             self.tokenizer,
-                            prompt=prompt_formatted,
-                            max_tokens=req.max_tokens,
+                            prompt=generation_inputs["prompt"],
+                            max_tokens=generation_inputs["max_tokens"],
                             sampler=sampler,
+                            **self._kv_generation_kwargs(),
                         ):
                             tokens_generated += 1
 
@@ -337,6 +468,8 @@ class ModelEngine:
                         await job.payload["response_queue"].put(None)
                     except Exception:
                         logger.exception("Failed to notify client for job %s", job.request_id)
+                finally:
+                    self._post_request_cleanup()
         except asyncio.CancelledError:
             logger.info("Queue worker cancelled.")
             raise
@@ -352,35 +485,38 @@ class ModelEngine:
         """
         async with self.lock:
             start_time = time.time()
+            try:
+                # format prompt
+                messages = []
+                if request.system_prompt:
+                    messages.append({"role": "system", "content": request.system_prompt})
 
-            # format prompt
-            messages = []
-            if request.system_prompt:
-                messages.append({"role": "system", "content": request.system_prompt})
+                messages.append({"role": "user", "content": request.prompt})
 
-            messages.append({"role": "user", "content": request.prompt})
+                prompt_formatted = self._apply_chat_template(
+                    messages, disable_thinking=getattr(request, "_disable_thinking", False)
+                )
+                generation_inputs = self._prepare_prompt_and_limits(request, prompt_formatted)
 
-            prompt_formatted = self._apply_chat_template(
-                messages, disable_thinking=getattr(request, "_disable_thinking", False)
-            )
+                response_text = generate(
+                    self.model,
+                    self.tokenizer,
+                    prompt=generation_inputs["prompt"],
+                    max_tokens=generation_inputs["max_tokens"],
+                    verbose=False,
+                    **self._kv_generation_kwargs(),
+                )
 
-            response_text = generate(
-                self.model,
-                self.tokenizer,
-                prompt=prompt_formatted,
-                max_tokens=request.max_tokens,
-                verbose=False
-            )
-
-            response_text = self._strip_thinking(response_text)
-            
-            end_time = time.time()
-
-            return {
-                "text": response_text,
-                "token_count": len(self.tokenizer.encode(response_text)),
-                "processing_time": end_time - start_time
-            }
+                response_text = self._strip_thinking(response_text)
+                
+                end_time = time.time()
+                return {
+                    "text": response_text,
+                    "token_count": len(self.tokenizer.encode(response_text)),
+                    "processing_time": end_time - start_time
+                }
+            finally:
+                self._post_request_cleanup()
 
     async def generate_stream(self, request) -> AsyncGenerator[str, None]:
         """

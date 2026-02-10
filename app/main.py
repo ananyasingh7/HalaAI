@@ -1,7 +1,11 @@
 import asyncio
+import time
 
 from fastapi import FastAPI, HTTPException
+from app.config import settings
 from app.engine import engine
+from app.monitor import monitor
+from app.queue import request_queue
 from app.session_manager import start_session_sweeper
 from app.schemas import GenerateRequest, GenerateResponse, AdapterLoadRequest
 from app.ws_chat import router as ws_router
@@ -28,6 +32,17 @@ async def stop_engine_tasks():
 @app.get("/")
 def health_check():
     return {"status": "online", "current_adapter": engine.adapter_id}
+
+
+@app.get("/metrics/memory")
+async def memory_metrics():
+    return {
+        "timestamp": time.time(),
+        "hardware": monitor.get_snapshot(),
+        "queue": await request_queue.stats(),
+        "engine_memory": settings.engine_memory.dict(),
+        "chroma_memory": settings.chroma_memory.dict(),
+    }
 
 @app.post("/chat", response_model=GenerateResponse)
 async def chat_endpoint(request: GenerateRequest):

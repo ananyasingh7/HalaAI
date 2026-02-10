@@ -153,12 +153,21 @@ curl -X POST http://localhost:8000/adapters/load \
 
 ### Performance
 
-- Legacy baseline (Qwen2.5-14B): avg ~29.8 tokens/sec with peaks around ~38 t/s.
-- Qwen3-30B-A3B throughput varies by prompt; measure locally for your workloads.
-- Roughly 4x human reading speed (~5-8 tokens/sec).
-- Total time vs tokens-out is linear, indicating stable throughput as responses get longer.
+- Refresh stats from the current DB:
 
-![Inference stats](performance/inference_stats_12-26-2025.png)
+```bash
+python performance/refresh_inference_stats.py
+python performance/refresh_inference_stats.py \
+  --model mlx-community/Qwen3-30B-A3B-4bit \
+  --csv-out performance/inferencelog_qwen3.csv \
+  --summary-out performance/INFERENCE_STATS_QWEN3.md
+```
+
+- Generated outputs:
+  - `performance/inferencelog.csv` (latest DB export)
+  - `performance/INFERENCE_STATS.md` (current aggregate summary)
+  - `performance/inferencelog_qwen3.csv` and `performance/INFERENCE_STATS_QWEN3.md` (Qwen3-only view)
+- Qwen3-30B-A3B throughput varies by prompt shape and memory limits (`max_kv_size`, prompt caps). Measure locally for your workload mix.
 
 ### Evals
 
@@ -245,11 +254,16 @@ Suggested breakpoints:
 
 ## Performance Notes
 
-Local tests on the Mac Studio M4 (legacy 14B baseline) showed:
-- ~30 tokens/sec streaming throughput.
-- Adapter fine-tuning retained personal facts without degrading general reasoning in the "golden dataset" checks.
+Use the stress harness and stats refresh scripts:
 
-Re-run `performance/stress_test.py` to characterize Qwen3-30B-A3B on your hardware.
+```bash
+python performance/stress_test.py --mode all --run-label baseline
+python performance/refresh_inference_stats.py
+```
+
+Review:
+- `performance/results/` for run-level stress artifacts.
+- `performance/INFERENCE_STATS.md` for up-to-date aggregate inference metrics.
 
 ## Deep Search + Browsing (Brave)
 
