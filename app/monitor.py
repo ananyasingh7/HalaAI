@@ -107,11 +107,21 @@ class HardwareMonitor:
                     line = process.stdout.readline()
                     if line:
                         data = json.loads(line)
-                        # Extract relevant keys (macmon keys may vary slightly by version)
-                        self.latest_stats["gpu_usage"] = self._coerce_float(data.get("gpu_usage", 0))
-                        self.latest_stats["gpu_power"] = self._coerce_float(data.get("gpu_power", 0)) / 1000.0 # mW -> W
-                        self.latest_stats["gpu_temp"] = self._coerce_float(data.get("gpu_temp_avg", 0))
-                        self.latest_stats["soc_temp"] = self._coerce_float(data.get("soc_temp", 0))
+
+                        # gpu_usage is [freq_mhz, utilization_fraction] — extract utilization as %
+                        gpu_usage_raw = data.get("gpu_usage")
+                        if isinstance(gpu_usage_raw, (list, tuple)) and len(gpu_usage_raw) >= 2:
+                            self.latest_stats["gpu_usage"] = gpu_usage_raw[1] * 100.0
+                        else:
+                            self.latest_stats["gpu_usage"] = self._coerce_float(gpu_usage_raw)
+
+                        # gpu_power is already in watts (not milliwatts)
+                        self.latest_stats["gpu_power"] = self._coerce_float(data.get("gpu_power", 0))
+
+                        # temp is nested: {"gpu_temp_avg": ..., "cpu_temp_avg": ...}
+                        temp_data = data.get("temp", {})
+                        self.latest_stats["gpu_temp"] = self._coerce_float(temp_data.get("gpu_temp_avg", 0))
+                        self.latest_stats["soc_temp"] = self._coerce_float(temp_data.get("cpu_temp_avg", 0))
 
                 time.sleep(0.5) # Update 2x per second
             except Exception:
